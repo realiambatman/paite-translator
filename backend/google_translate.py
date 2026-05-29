@@ -59,5 +59,5 @@ def translate(text: str, source: str, target: str) -> str:
     if not translations:
         raise RuntimeError("Google Translate returned an empty response.")
 
-    record_usage(text)
+    record_usage(len(text))
     return translations[0]["translatedText"]

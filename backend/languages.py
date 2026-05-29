@@ -7,7 +7,7 @@ LANGUAGES: dict[str, dict] = {
     ENGLISH: {"label": "English", "google": "en", "provider": "hf"},
     PAITE: {"label": "Paite", "google": None, "provider": "hf"},
     "lus_Latn": {"label": "Mizo", "google": "lus", "provider": "google"},
-    "mni_Beng": {"label": "Meitei", "google": "mni", "provider": "google"},
+    "mni_Beng": {"label": "Meitei", "google": "mni-Mtei", "provider": "google"},
     "mya_Mymr": {"label": "Burmese", "google": "my", "provider": "google"},
     "hin_Deva": {"label": "Hindi", "google": "hi", "provider": "google"},
 }

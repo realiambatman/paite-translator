@@ -332,11 +332,27 @@ class TranslationEngine:
         result, _, _ = self._execute_translation(text, src_lang, tgt_lang)
         return result
 
-    def _with_meta(self, chunk: dict, route: str, pivot_english: str | None) -> dict:
+    def _google_chars_used(
+        self, route: str, text: str, pivot_english: str | None
+    ) -> int:
+        if route == "google" or route == "to_paite":
+            return len(text)
+        if route == "from_paite":
+            return len(pivot_english or "")
+        return 0
+
+    def _with_meta(
+        self,
+        chunk: dict,
+        route: str,
+        pivot_english: str | None,
+        text: str,
+    ) -> dict:
         return {
             **chunk,
             "route": route,
             "pivot_english": pivot_english,
+            "google_chars_used": self._google_chars_used(route, text, pivot_english),
         }
 
     def translate_stream(self, text: str, src_lang: str, tgt_lang: str):
@@ -355,7 +371,7 @@ class TranslationEngine:
         if route == "hf":
             for chunk in self._translate_stream_hf(text, src_lang, tgt_lang):
                 if chunk["current"] == chunk["total"] and chunk["total"] > 0:
-                    yield self._with_meta(chunk, route, None)
+                    yield self._with_meta(chunk, route, None, text)
                 else:
                     yield chunk
         elif route == "google":
@@ -364,12 +380,13 @@ class TranslationEngine:
                 {"translation": final_result, "current": 1, "total": 1},
                 route,
                 None,
+                text,
             )
         elif route == "to_paite":
             pivot_english = self._translate_google(text, src_lang, ENGLISH)
             for chunk in self._translate_stream_hf(pivot_english, ENGLISH, PAITE):
                 if chunk["current"] == chunk["total"] and chunk["total"] > 0:
-                    yield self._with_meta(chunk, route, pivot_english)
+                    yield self._with_meta(chunk, route, pivot_english, text)
                 else:
                     yield chunk
         elif route == "from_paite":
@@ -379,6 +396,7 @@ class TranslationEngine:
                 {"translation": final_result, "current": 1, "total": 1},
                 route,
                 pivot_english,
+                text,
             )
         else:
             raise ValueError(f"Unsupported language pair: {src_lang} -> {tgt_lang}")

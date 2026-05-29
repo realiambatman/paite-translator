@@ -8,6 +8,10 @@ import {
 } from "./services/api";
 import { analyzeInput, DEFAULT_MAX_TOKENS } from "./utils/textLimits";
 import { saveTranslationLog } from "./services/translationLog";
+import {
+  fetchGoogleQuota,
+  incrementGoogleQuota,
+} from "./services/googleQuota";
 
 const HF_LANGS = new Set<LangCode>(["eng_Latn", "pai_Latn"]);
 
@@ -55,15 +59,23 @@ export default function App() {
   const [tgtLang, setTgtLang] = useState<LangCode>("pai_Latn");
   const [isTranslating, setIsTranslating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [firestoreCharsUsed, setFirestoreCharsUsed] = useState<number | null>(
+    null,
+  );
   const abortRef = useRef<AbortController | null>(null);
   const outputRef = useRef<HTMLDivElement>(null);
 
   const languages = status?.languages ?? FALLBACK_LANGUAGES;
   const maxTokens = status?.limits?.max_tokens ?? DEFAULT_MAX_TOKENS;
-  const googleQuota = status?.google_quota;
-  const googleQuotaExceeded = googleQuota?.quota_exceeded ?? false;
+  const googleDailyLimit = status?.google_quota?.daily_char_limit ?? null;
+  const googleCharsUsed = Math.max(
+    firestoreCharsUsed ?? 0,
+    status?.google_quota?.daily_chars_used ?? 0,
+  );
+  const googleQuotaExceeded =
+    googleDailyLimit != null && googleCharsUsed >= googleDailyLimit;
   const googleConfigured = status?.google_translate_configured ?? false;
-  const googleEnabled = status?.google_translate_enabled ?? false;
+  const googleEnabled = googleConfigured && !googleQuotaExceeded;
   const googleRequired = needsGoogleRoute(srcLang, tgtLang);
 
   const availableLanguages = useMemo(
@@ -89,6 +101,11 @@ export default function App() {
     [inputText, maxTokens],
   );
 
+  const refreshQuota = useCallback(async () => {
+    const stored = await fetchGoogleQuota();
+    if (stored) setFirestoreCharsUsed(stored.chars_used);
+  }, []);
+
   const refreshStatus = useCallback(async () => {
     try {
       const next = await fetchStatus();
@@ -97,7 +114,8 @@ export default function App() {
     } catch {
       setStatus(null);
     }
-  }, []);
+    await refreshQuota();
+  }, [refreshQuota]);
 
   useEffect(() => {
     if (!googleQuotaExceeded) return;
@@ -147,6 +165,10 @@ export default function App() {
         controller.signal,
       );
       if (result.translation) {
+        if (result.googleCharsUsed && result.googleCharsUsed > 0) {
+          await incrementGoogleQuota(result.googleCharsUsed);
+          await refreshQuota();
+        }
         void saveTranslationLog({
           srcLang: src,
           tgtLang: tgt,
@@ -287,9 +309,9 @@ export default function App() {
           {googleQuotaExceeded && (
             <p className="border-b border-amber-200/60 bg-amber-50/80 px-4 py-2 text-xs text-amber-900">
               Google Translate daily limit reached (
-              {googleQuota?.daily_chars_used?.toLocaleString()} /{" "}
-              {googleQuota?.daily_char_limit?.toLocaleString()} characters). Only
-              English ↔ Paite until midnight UTC.
+              {googleCharsUsed.toLocaleString()} /{" "}
+              {googleDailyLimit?.toLocaleString()} characters). Only English ↔
+              Paite until midnight UTC.
             </p>
           )}
 

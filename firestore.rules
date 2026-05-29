@@ -12,9 +12,13 @@ service cloud.firestore {
       allow read, update, delete: if false;
     }
 
-    // Written by backend service account only (Admin SDK bypasses rules)
     match /google_translate_quota/{dayId} {
-      allow read, write: if false;
+      allow read: if true;
+      allow create, update: if request.resource.data.date == dayId
+        && request.resource.data.chars_used is int
+        && request.resource.data.chars_used >= 0
+        && request.resource.data.chars_used <= 500000;
+      allow delete: if false;
     }
   }
 }

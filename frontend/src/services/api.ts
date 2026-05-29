@@ -25,7 +25,6 @@ export interface GoogleQuotaStatus {
   daily_chars_remaining: number | null;
   quota_exceeded: boolean;
   resets_at_utc: string;
-  persisted?: boolean;
 }
 
 export interface ModelStatus {
@@ -76,6 +75,7 @@ export interface StreamResult {
   translation: string;
   route?: string | null;
   pivotEnglish?: string | null;
+  googleCharsUsed?: number;
 }
 
 export interface TranslateStreamEvent {
@@ -84,6 +84,7 @@ export interface TranslateStreamEvent {
   total?: number;
   route?: string | null;
   pivot_english?: string | null;
+  google_chars_used?: number;
   done: boolean;
   error?: string;
 }
@@ -147,6 +148,7 @@ export function translateTextStream(
                 translation: event.translation,
                 route: event.route ?? null,
                 pivotEnglish: event.pivot_english ?? null,
+                googleCharsUsed: event.google_chars_used ?? 0,
               };
             }
           }
