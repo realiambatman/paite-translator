@@ -6,7 +6,8 @@ from pathlib import Path
 import nltk
 import torch
 from huggingface_hub import hf_hub_download, snapshot_download
-from google_translate import is_configured as google_configured, translate as google_translate_text
+from google_quota import quota_exceeded, quota_info
+from google_translate import is_configured as google_configured, is_available as google_available, translate as google_translate_text
 from languages import (
     ENGLISH,
     PAITE,
@@ -136,7 +137,9 @@ class TranslationEngine:
             "inference_backend": self.inference_backend,
             "model_repo": self.model_repo,
             "languages": languages_for_api(),
-            "google_translate_enabled": google_configured(),
+            "google_translate_enabled": google_available(),
+            "google_translate_configured": google_configured(),
+            "google_quota": quota_info(),
             "error": self.error,
             "limits": limits_info(),
         }
@@ -250,6 +253,10 @@ class TranslationEngine:
         if uses_google(src_lang, tgt_lang) and not google_configured():
             raise RuntimeError(
                 "This language pair uses Google Translate, but GOOGLE_TRANSLATE_API_KEY is not set."
+            )
+        if uses_google(src_lang, tgt_lang) and quota_exceeded():
+            raise RuntimeError(
+                "Google Translate daily character limit reached. English ↔ Paite still works."
             )
         enforce_input_limits(text)
 

@@ -60,8 +60,29 @@ export default function App() {
 
   const languages = status?.languages ?? FALLBACK_LANGUAGES;
   const maxTokens = status?.limits?.max_tokens ?? DEFAULT_MAX_TOKENS;
+  const googleQuota = status?.google_quota;
+  const googleQuotaExceeded = googleQuota?.quota_exceeded ?? false;
+  const googleConfigured = status?.google_translate_configured ?? false;
   const googleEnabled = status?.google_translate_enabled ?? false;
   const googleRequired = needsGoogleRoute(srcLang, tgtLang);
+
+  const availableLanguages = useMemo(
+    () =>
+      googleQuotaExceeded
+        ? languages.filter((lang) => lang.provider === "hf")
+        : languages,
+    [languages, googleQuotaExceeded],
+  );
+
+  const visibleExamples = useMemo(
+    () =>
+      googleQuotaExceeded
+        ? EXAMPLES.filter(
+            (ex) => !needsGoogleRoute(ex.src, ex.tgt),
+          )
+        : EXAMPLES,
+    [googleQuotaExceeded],
+  );
 
   const inputAnalysis = useMemo(
     () => analyzeInput(inputText, maxTokens),
@@ -79,6 +100,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!googleQuotaExceeded) return;
+    if (!HF_LANGS.has(srcLang)) setSrcLang("eng_Latn");
+    if (!HF_LANGS.has(tgtLang)) setTgtLang("pai_Latn");
+  }, [googleQuotaExceeded, srcLang, tgtLang]);
+
+  useEffect(() => {
     refreshStatus();
     const timer = window.setInterval(refreshStatus, 5000);
     return () => window.clearInterval(timer);
@@ -94,7 +121,11 @@ export default function App() {
     if (!text.trim() || !analyzeInput(text, maxTokens).valid) return;
     if (needsGoogleRoute(src, tgt) && !googleEnabled) {
       setError(
-        "This language pair needs Google Translate. Add GOOGLE_TRANSLATE_API_KEY on the server.",
+        googleQuotaExceeded
+          ? "Google Translate daily limit reached. English ↔ Paite still works until midnight UTC."
+          : googleConfigured
+            ? "Google Translate is unavailable for this language pair right now."
+            : "This language pair needs Google Translate. Add GOOGLE_TRANSLATE_API_KEY on the server.",
       );
       return;
     }
@@ -207,7 +238,7 @@ export default function App() {
               disabled={isTranslating}
               className="rounded-lg border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm font-medium text-zomi-ink outline-none focus:border-zomi-red/50 disabled:opacity-60"
             >
-              {languages.map((lang) => (
+              {availableLanguages.map((lang) => (
                 <option key={lang.code} value={lang.code}>
                   {lang.label}
                 </option>
@@ -230,7 +261,7 @@ export default function App() {
               disabled={isTranslating}
               className="rounded-lg border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm font-medium text-zomi-ink outline-none focus:border-zomi-red/50 disabled:opacity-60"
             >
-              {languages.map((lang) => (
+              {availableLanguages.map((lang) => (
                 <option key={lang.code} value={lang.code}>
                   {lang.label}
                 </option>
@@ -253,7 +284,16 @@ export default function App() {
             </button>
           </div>
 
-          {googleRequired && !googleEnabled && (
+          {googleQuotaExceeded && (
+            <p className="border-b border-amber-200/60 bg-amber-50/80 px-4 py-2 text-xs text-amber-900">
+              Google Translate daily limit reached (
+              {googleQuota?.daily_chars_used?.toLocaleString()} /{" "}
+              {googleQuota?.daily_char_limit?.toLocaleString()} characters). Only
+              English ↔ Paite until midnight UTC.
+            </p>
+          )}
+
+          {googleRequired && !googleEnabled && !googleQuotaExceeded && (
             <p className="border-b border-amber-200/60 bg-amber-50/80 px-4 py-2 text-xs text-amber-900">
               This pair uses Google Translate through English. Set{" "}
               <code className="rounded bg-white/80 px-1">
@@ -364,7 +404,7 @@ export default function App() {
             Try an example
           </h2>
           <div className="flex gap-2 overflow-x-auto pb-1">
-            {EXAMPLES.map((example, index) => (
+            {visibleExamples.map((example, index) => (
               <button
                 key={index}
                 type="button"

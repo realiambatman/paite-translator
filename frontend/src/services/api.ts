@@ -19,6 +19,15 @@ export interface TranslationLimits {
   single_sentence_only: boolean;
 }
 
+export interface GoogleQuotaStatus {
+  daily_char_limit: number | null;
+  daily_chars_used: number;
+  daily_chars_remaining: number | null;
+  quota_exceeded: boolean;
+  resets_at_utc: string;
+  persisted?: boolean;
+}
+
 export interface ModelStatus {
   ready: boolean;
   device: string;
@@ -28,6 +37,8 @@ export interface ModelStatus {
   error: string | null;
   limits?: TranslationLimits;
   google_translate_enabled?: boolean;
+  google_translate_configured?: boolean;
+  google_quota?: GoogleQuotaStatus;
 }
 
 export interface TranslateResult {

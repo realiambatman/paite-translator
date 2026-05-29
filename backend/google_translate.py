@@ -4,6 +4,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from google_quota import check_can_translate, quota_exceeded, record_usage
+
 GOOGLE_TRANSLATE_API_KEY = os.environ.get("GOOGLE_TRANSLATE_API_KEY", "")
 GOOGLE_TRANSLATE_URL = "https://translation.googleapis.com/language/translate/v2"
 
@@ -12,12 +14,18 @@ def is_configured() -> bool:
     return bool(GOOGLE_TRANSLATE_API_KEY.strip())
 
 
+def is_available() -> bool:
+    return is_configured() and not quota_exceeded()
+
+
 def translate(text: str, source: str, target: str) -> str:
     api_key = GOOGLE_TRANSLATE_API_KEY.strip()
     if not api_key:
         raise RuntimeError(
             "Google Translate is not configured. Set GOOGLE_TRANSLATE_API_KEY on the server."
         )
+
+    check_can_translate(text)
 
     params = urllib.parse.urlencode(
         {
@@ -51,4 +59,5 @@ def translate(text: str, source: str, target: str) -> str:
     if not translations:
         raise RuntimeError("Google Translate returned an empty response.")
 
+    record_usage(text)
     return translations[0]["translatedText"]

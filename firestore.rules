@@ -11,5 +11,10 @@ service cloud.firestore {
         && request.resource.data.tgt_text.size() <= 500;
       allow read, update, delete: if false;
     }
+
+    // Written by backend service account only (Admin SDK bypasses rules)
+    match /google_translate_quota/{dayId} {
+      allow read, write: if false;
+    }
   }
 }
