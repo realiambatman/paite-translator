@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /translations/{docId} {
+      allow create: if request.resource.data.keys().hasAll([
+          'src_lang', 'tgt_lang', 'src_text', 'tgt_text'
+        ])
+        && request.resource.data.src_text is string
+        && request.resource.data.src_text.size() <= 500
+        && request.resource.data.tgt_text is string
+        && request.resource.data.tgt_text.size() <= 500;
+      allow read, update, delete: if false;
+    }
+  }
+}

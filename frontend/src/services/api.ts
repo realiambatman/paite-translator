@@ -55,18 +55,26 @@ export function fetchStatus(): Promise<ModelStatus> {
   return request<ModelStatus>("/api/status");
 }
 
-export interface TranslateStreamEvent {
-  translation?: string;
-  current?: number;
-  total?: number;
-  done: boolean;
-  error?: string;
-}
-
 export interface StreamUpdate {
   translation: string;
   current: number;
   total: number;
+}
+
+export interface StreamResult {
+  translation: string;
+  route?: string | null;
+  pivotEnglish?: string | null;
+}
+
+export interface TranslateStreamEvent {
+  translation?: string;
+  current?: number;
+  total?: number;
+  route?: string | null;
+  pivot_english?: string | null;
+  done: boolean;
+  error?: string;
 }
 
 export function translateTextStream(
@@ -75,7 +83,7 @@ export function translateTextStream(
   tgtLang: LangCode,
   onChunk: (update: StreamUpdate) => void,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<StreamResult> {
   return new Promise((resolve, reject) => {
     fetch(`${API_BASE}/api/translate/stream`, {
       method: "POST",
@@ -102,6 +110,7 @@ export function translateTextStream(
 
         const decoder = new TextDecoder();
         let buffer = "";
+        let finalResult: StreamResult = { translation: "" };
 
         while (true) {
           const { done, value } = await reader.read();
@@ -122,9 +131,16 @@ export function translateTextStream(
                 total: event.total ?? 0,
               });
             }
+            if (event.done && event.translation !== undefined) {
+              finalResult = {
+                translation: event.translation,
+                route: event.route ?? null,
+                pivotEnglish: event.pivot_english ?? null,
+              };
+            }
           }
         }
-        resolve();
+        resolve(finalResult);
       })
       .catch(reject);
   });

@@ -91,11 +91,17 @@ def translate_stream(body: TranslateRequest):
         partial = ""
         current = 0
         total = 0
+        pivot_english = None
+        route = None
         try:
             for chunk in engine.translate_stream(body.text, body.src_lang, body.tgt_lang):
                 partial = chunk["translation"]
                 current = chunk["current"]
                 total = chunk["total"]
+                if chunk.get("route") is not None:
+                    route = chunk["route"]
+                if chunk.get("pivot_english") is not None:
+                    pivot_english = chunk["pivot_english"]
                 payload = json.dumps(
                     {
                         "translation": partial,
@@ -111,6 +117,8 @@ def translate_stream(body: TranslateRequest):
                     "translation": partial,
                     "current": current,
                     "total": total,
+                    "route": route,
+                    "pivot_english": pivot_english,
                     "done": True,
                 },
                 ensure_ascii=False,

@@ -1,5 +1,7 @@
 .env
 .env.local
+*-firebase-adminsdk-*.json
+firebase-service-account.json
 *.pyc
 __pycache__/
 .pytest_cache/

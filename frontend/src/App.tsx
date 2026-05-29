@@ -7,6 +7,7 @@ import {
   translateTextStream,
 } from "./services/api";
 import { analyzeInput, DEFAULT_MAX_TOKENS } from "./utils/textLimits";
+import { saveTranslationLog } from "./services/translationLog";
 
 const HF_LANGS = new Set<LangCode>(["eng_Latn", "pai_Latn"]);
 
@@ -107,13 +108,23 @@ export default function App() {
     setOutputText("");
 
     try {
-      await translateTextStream(
+      const result = await translateTextStream(
         text,
         src,
         tgt,
         ({ translation }) => setOutputText(translation),
         controller.signal,
       );
+      if (result.translation) {
+        void saveTranslationLog({
+          srcLang: src,
+          tgtLang: tgt,
+          srcText: text,
+          tgtText: result.translation,
+          route: result.route,
+          pivotEnglish: result.pivotEnglish,
+        });
+      }
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Translation failed.");

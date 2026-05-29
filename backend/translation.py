@@ -267,6 +267,26 @@ class TranslationEngine:
                 "total": total,
             }
 
+    def _execute_translation(
+        self, text: str, src_lang: str, tgt_lang: str
+    ) -> tuple[str, str | None, str]:
+        route = resolve_route(src_lang, tgt_lang)
+
+        if route == "hf":
+            return self._translate_hf(text, src_lang, tgt_lang), None, route
+        if route == "google":
+            return self._translate_google(text, src_lang, tgt_lang), None, route
+        if route == "to_paite":
+            english = self._translate_google(text, src_lang, ENGLISH)
+            result = self._translate_hf(english, ENGLISH, PAITE)
+            return result, english, route
+        if route == "from_paite":
+            english = self._translate_hf(text, PAITE, ENGLISH)
+            result = self._translate_google(english, ENGLISH, tgt_lang)
+            return result, english, route
+
+        raise ValueError(f"Unsupported language pair: {src_lang} -> {tgt_lang}")
+
     def translate(self, text: str, src_lang: str, tgt_lang: str) -> str:
         self._validate_request(text, src_lang, tgt_lang)
 
@@ -275,19 +295,15 @@ class TranslationEngine:
         if src_lang == tgt_lang:
             return text
 
-        route = resolve_route(src_lang, tgt_lang)
-        if route == "hf":
-            return self._translate_hf(text, src_lang, tgt_lang)
-        if route == "google":
-            return self._translate_google(text, src_lang, tgt_lang)
-        if route == "to_paite":
-            english = self._translate_google(text, src_lang, ENGLISH)
-            return self._translate_hf(english, ENGLISH, PAITE)
-        if route == "from_paite":
-            english = self._translate_hf(text, PAITE, ENGLISH)
-            return self._translate_google(english, ENGLISH, tgt_lang)
+        result, _, _ = self._execute_translation(text, src_lang, tgt_lang)
+        return result
 
-        raise ValueError(f"Unsupported language pair: {src_lang} -> {tgt_lang}")
+    def _with_meta(self, chunk: dict, route: str, pivot_english: str | None) -> dict:
+        return {
+            **chunk,
+            "route": route,
+            "pivot_english": pivot_english,
+        }
 
     def translate_stream(self, text: str, src_lang: str, tgt_lang: str):
         """Yield partial translations with progress for streaming UI."""
@@ -301,21 +317,34 @@ class TranslationEngine:
             return
 
         route = resolve_route(src_lang, tgt_lang)
-        if route == "hf":
-            yield from self._translate_stream_hf(text, src_lang, tgt_lang)
-            return
-        if route == "google":
-            result = self._translate_google(text, src_lang, tgt_lang)
-            yield {"translation": result, "current": 1, "total": 1}
-            return
-        if route == "to_paite":
-            english = self._translate_google(text, src_lang, ENGLISH)
-            yield from self._translate_stream_hf(english, ENGLISH, PAITE)
-            return
-        if route == "from_paite":
-            english = self._translate_hf(text, PAITE, ENGLISH)
-            result = self._translate_google(english, ENGLISH, tgt_lang)
-            yield {"translation": result, "current": 1, "total": 1}
-            return
 
-        raise ValueError(f"Unsupported language pair: {src_lang} -> {tgt_lang}")
+        if route == "hf":
+            for chunk in self._translate_stream_hf(text, src_lang, tgt_lang):
+                if chunk["current"] == chunk["total"] and chunk["total"] > 0:
+                    yield self._with_meta(chunk, route, None)
+                else:
+                    yield chunk
+        elif route == "google":
+            final_result = self._translate_google(text, src_lang, tgt_lang)
+            yield self._with_meta(
+                {"translation": final_result, "current": 1, "total": 1},
+                route,
+                None,
+            )
+        elif route == "to_paite":
+            pivot_english = self._translate_google(text, src_lang, ENGLISH)
+            for chunk in self._translate_stream_hf(pivot_english, ENGLISH, PAITE):
+                if chunk["current"] == chunk["total"] and chunk["total"] > 0:
+                    yield self._with_meta(chunk, route, pivot_english)
+                else:
+                    yield chunk
+        elif route == "from_paite":
+            pivot_english = self._translate_hf(text, PAITE, ENGLISH)
+            final_result = self._translate_google(pivot_english, ENGLISH, tgt_lang)
+            yield self._with_meta(
+                {"translation": final_result, "current": 1, "total": 1},
+                route,
+                pivot_english,
+            )
+        else:
+            raise ValueError(f"Unsupported language pair: {src_lang} -> {tgt_lang}")
