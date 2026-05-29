@@ -128,10 +128,10 @@ export default function App() {
     if (needsGoogleRoute(src, tgt) && !googleEnabled) {
       setError(
         googleQuotaExceeded
-          ? "Google Translate daily limit reached. English ↔ Paite still works until midnight UTC."
+          ? "Limit reached. English ↔ Paite still works until midnight UTC."
           : googleConfigured
-            ? "Google Translate is unavailable for this language pair right now."
-            : "This language pair needs Google Translate. Add GOOGLE_TRANSLATE_API_KEY on the server.",
+            ? "Translate is unavailable for this language pair right now."
+            : "This language pair needs G Translate. Add G_TRANSLATE_API_KEY on the server.",
       );
       return;
     }
@@ -228,7 +228,7 @@ export default function App() {
             </h1>
             <p className="mt-1 max-w-lg text-sm text-zomi-muted">
               Translate Paite with English, Mizo, Meitei, Burmese, Hindi, and
-              more regional and world languages via Google Translate.
+              more regional and world languages.
             </p>
           </div>
           <p className="text-xs text-zomi-muted sm:text-right">
