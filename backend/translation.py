@@ -17,9 +17,11 @@ from languages import (
     uses_google,
 )
 from limits import enforce_input_limits, limits_info
+from ct2_inference import CT2_MODEL_REPO, load_ct2, translate_batch_ct2
 from transformers import AutoModelForSeq2SeqLM, BitsAndBytesConfig, NllbTokenizer
 
 MODEL_REPO = os.environ.get("MODEL_REPO", "sensix-zo/nllb-paite-600m-v15")
+INFERENCE_BACKEND = os.environ.get("INFERENCE_BACKEND", "pytorch").lower()
 BASE_NLLB_REPO = "facebook/nllb-200-distilled-600M"
 HF_TOKEN = os.environ.get("HF_TOKEN")
 CPU_BATCH_SIZE = int(os.environ.get("CPU_BATCH_SIZE", "1"))
@@ -65,16 +67,28 @@ def fix_bullet_points(translated_text: str) -> str:
 
 class TranslationEngine:
     def __init__(self):
+        self.inference_backend = INFERENCE_BACKEND
         self.device = _detect_device()
         self.quantization = "none"
+        self.model_repo = CT2_MODEL_REPO if self.inference_backend == "ctranslate2" else MODEL_REPO
         self.tokenizer: NllbTokenizer | None = None
         self.model: AutoModelForSeq2SeqLM | None = None
+        self.ct2_translator = None
         self.ready = False
         self.error: str | None = None
 
     def load(self):
         _ensure_nltk()
-        print(f"Loading model to {self.device}...")
+        if self.inference_backend == "ctranslate2":
+            print(f"Loading CTranslate2 model from {CT2_MODEL_REPO}...")
+            load_ct2(self)
+            return
+        self._load_pytorch()
+
+    def _load_pytorch(self):
+        print(f"Loading PyTorch model to {self.device}...")
+        self.inference_backend = "pytorch"
+        self.model_repo = MODEL_REPO
 
         local_repo_path = snapshot_download(repo_id=MODEL_REPO, token=HF_TOKEN)
 
@@ -119,7 +133,8 @@ class TranslationEngine:
             "ready": self.ready,
             "device": self.device,
             "quantization": self.quantization,
-            "model_repo": MODEL_REPO,
+            "inference_backend": self.inference_backend,
+            "model_repo": self.model_repo,
             "languages": languages_for_api(),
             "google_translate_enabled": google_configured(),
             "error": self.error,
@@ -129,6 +144,8 @@ class TranslationEngine:
     def _num_beams(self) -> int:
         if os.environ.get("NUM_BEAMS"):
             return max(1, int(os.environ["NUM_BEAMS"]))
+        if self.inference_backend == "ctranslate2":
+            return 1 if self.device == "cpu" else 4
         return 5 if self.device == "cuda" else 1
 
     def _batch_size(self) -> int:
@@ -166,6 +183,9 @@ class TranslationEngine:
                 sent_idx += count
         return "\n".join(final_output)
 
+    def _model_ready(self) -> bool:
+        return self.model is not None or self.ct2_translator is not None
+
     def _translate_batch(
         self,
         sentences: list[str],
@@ -173,12 +193,19 @@ class TranslationEngine:
         tgt_lang: str,
         batch_size: int | None = None,
     ) -> list[str]:
-        assert self.tokenizer is not None and self.model is not None
+        assert self.tokenizer is not None and self._model_ready()
 
-        translated: list[str] = []
-        self.tokenizer.src_lang = src_lang
         batch_size = batch_size or self._batch_size()
         num_beams = self._num_beams()
+
+        if self.inference_backend == "ctranslate2":
+            return translate_batch_ct2(
+                self, sentences, src_lang, tgt_lang, batch_size, num_beams
+            )
+
+        assert self.model is not None
+        translated: list[str] = []
+        self.tokenizer.src_lang = src_lang
 
         for i in range(0, len(sentences), batch_size):
             batch = sentences[i : i + batch_size]
@@ -212,7 +239,7 @@ class TranslationEngine:
         return translated
 
     def _validate_request(self, text: str, src_lang: str, tgt_lang: str) -> None:
-        if not self.ready or self.tokenizer is None or self.model is None:
+        if not self.ready or self.tokenizer is None or not self._model_ready():
             raise RuntimeError("Model is not loaded yet")
         if src_lang not in LANGUAGES or tgt_lang not in LANGUAGES:
             raise ValueError(f"Unsupported language pair: {src_lang} -> {tgt_lang}")
