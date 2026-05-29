@@ -1,8 +1,10 @@
+import json
 import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -74,6 +76,37 @@ def translate(body: TranslateRequest):
         translation=result,
         src_lang=body.src_lang,
         tgt_lang=body.tgt_lang,
+    )
+
+
+@app.post("/api/translate/stream")
+def translate_stream(body: TranslateRequest):
+    if not engine.ready:
+        detail = engine.error or "Model is still loading. Please try again shortly."
+        raise HTTPException(status_code=503, detail=detail)
+
+    def event_stream():
+        partial = ""
+        try:
+            for partial in engine.translate_stream(body.text, body.src_lang, body.tgt_lang):
+                payload = json.dumps(
+                    {"translation": partial, "done": False},
+                    ensure_ascii=False,
+                )
+                yield f"data: {payload}\n\n"
+            final = json.dumps({"translation": partial, "done": True}, ensure_ascii=False)
+            yield f"data: {final}\n\n"
+        except ValueError as exc:
+            payload = json.dumps({"error": str(exc), "done": True}, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
+        except Exception as exc:
+            payload = json.dumps({"error": str(exc), "done": True}, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

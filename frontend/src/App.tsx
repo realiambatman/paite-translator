@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchStatus,
   type LangCode,
   type ModelStatus,
-  translateText,
+  translateTextStream,
 } from "./services/api";
 
 const LANGUAGES: { code: LangCode; label: string }[] = [
@@ -41,6 +41,7 @@ export default function App() {
   const [tgtLang, setTgtLang] = useState<LangCode>("pai_Latn");
   const [isTranslating, setIsTranslating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -65,16 +66,29 @@ export default function App() {
   ) => {
     if (!text.trim()) return;
 
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setIsTranslating(true);
     setError(null);
     setOutputText("");
 
     try {
-      const result = await translateText(text, src, tgt);
-      setOutputText(result.translation);
+      await translateTextStream(
+        text,
+        src,
+        tgt,
+        (partial) => setOutputText(partial),
+        controller.signal,
+      );
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Translation failed.");
     } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
       setIsTranslating(false);
     }
   };
@@ -198,16 +212,19 @@ export default function App() {
               Translation ({langLabel(tgtLang)})
             </div>
             <div className="min-h-[280px] flex-1 overflow-y-auto px-4 py-3">
-              {isTranslating ? (
+              {outputText ? (
+                <p className="whitespace-pre-wrap text-base leading-relaxed text-slate-900">
+                  {outputText}
+                  {isTranslating && (
+                    <span className="ml-1 inline-block h-4 w-0.5 animate-pulse bg-indigo-500 align-middle" />
+                  )}
+                </p>
+              ) : isTranslating ? (
                 <div className="flex items-center gap-2 text-slate-500">
                   <span className="h-2 w-2 animate-bounce rounded-full bg-indigo-400 [animation-delay:0ms]" />
                   <span className="h-2 w-2 animate-bounce rounded-full bg-indigo-400 [animation-delay:150ms]" />
                   <span className="h-2 w-2 animate-bounce rounded-full bg-indigo-400 [animation-delay:300ms]" />
                 </div>
-              ) : outputText ? (
-                <p className="whitespace-pre-wrap text-base leading-relaxed text-slate-900">
-                  {outputText}
-                </p>
               ) : (
                 <p className="text-sm text-slate-400">
                   Translation will appear here.

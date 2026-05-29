@@ -41,18 +41,63 @@ export function fetchStatus(): Promise<ModelStatus> {
   return request<ModelStatus>("/api/status");
 }
 
-export function translateText(
+export interface TranslateStreamEvent {
+  translation?: string;
+  done: boolean;
+  error?: string;
+}
+
+export function translateTextStream(
   text: string,
   srcLang: LangCode,
   tgtLang: LangCode,
-): Promise<TranslateResult> {
-  return request<TranslateResult>("/api/translate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text,
-      src_lang: srcLang,
-      tgt_lang: tgtLang,
-    }),
+  onChunk: (translation: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    fetch(`${API_BASE}/api/translate/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        src_lang: srcLang,
+        tgt_lang: tgtLang,
+      }),
+      signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          const detail =
+            typeof payload.detail === "string"
+              ? payload.detail
+              : "Request failed. Please try again.";
+          throw new Error(detail);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error("Streaming not supported.");
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const event = JSON.parse(line.slice(6)) as TranslateStreamEvent;
+            if (event.error) throw new Error(event.error);
+            if (event.translation !== undefined) onChunk(event.translation);
+          }
+        }
+        resolve();
+      })
+      .catch(reject);
   });
 }
