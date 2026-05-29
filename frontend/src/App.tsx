@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import StreamProgress from "./components/StreamProgress";
 import {
   fetchStatus,
   type LangCode,
@@ -41,8 +40,6 @@ export default function App() {
   const [srcLang, setSrcLang] = useState<LangCode>("eng_Latn");
   const [tgtLang, setTgtLang] = useState<LangCode>("pai_Latn");
   const [isTranslating, setIsTranslating] = useState(false);
-  const [streamCurrent, setStreamCurrent] = useState(0);
-  const [streamTotal, setStreamTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const outputRef = useRef<HTMLDivElement>(null);
@@ -83,19 +80,13 @@ export default function App() {
     setIsTranslating(true);
     setError(null);
     setOutputText("");
-    setStreamCurrent(0);
-    setStreamTotal(0);
 
     try {
       await translateTextStream(
         text,
         src,
         tgt,
-        ({ translation, current, total }) => {
-          setOutputText(translation);
-          setStreamCurrent(current);
-          setStreamTotal(total);
-        },
+        ({ translation }) => setOutputText(translation),
         controller.signal,
       );
     } catch (err) {
@@ -132,19 +123,17 @@ export default function App() {
       <div className="mx-auto max-w-6xl px-4 py-8 md:py-12">
         <header className="mb-8 text-center">
           <h1 className="text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">
-            English ↔ Paite Translator
+            Zomi Paite Translator
           </h1>
-          <p className="mt-2 text-slate-600">
-            Translates long documents seamlessly. Original formatting is
-            preserved.
+          <p className="mt-1 text-lg font-medium text-slate-700">
+            English ↔ Paite (Zomi Language)
+          </p>
+          <p className="mt-2 max-w-2xl mx-auto text-slate-600">
+            Translate English and Paite for the Zomi community. Long documents,
+            sermons, and notes keep their original formatting.
           </p>
 
           <div className="mt-4 inline-flex flex-wrap items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600 shadow-sm">
-            <span
-              className={`inline-block h-2 w-2 rounded-full ${
-                modelReady ? "bg-emerald-500" : "bg-amber-400 animate-pulse"
-              }`}
-            />
             {modelReady ? (
               <>
                 <span>Model ready</span>
@@ -233,31 +222,10 @@ export default function App() {
             </div>
           </section>
 
-          <section
-            className={`flex min-h-[360px] flex-col overflow-hidden rounded-2xl border bg-white shadow-sm transition-colors duration-300 ${
-              isTranslating
-                ? "border-indigo-300 ring-2 ring-indigo-100"
-                : "border-slate-200"
-            }`}
-          >
-            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 text-sm font-medium text-slate-600">
-              <span>Translation ({langLabel(tgtLang)})</span>
-              {isTranslating && (
-                <span className="flex items-center gap-1.5 text-xs font-normal text-indigo-600">
-                  <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75" />
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-500" />
-                  </span>
-                  Live
-                </span>
-              )}
+          <section className="flex min-h-[360px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-100 px-4 py-3 text-sm font-medium text-slate-600">
+              Translation ({langLabel(tgtLang)})
             </div>
-
-            <StreamProgress
-              current={streamCurrent}
-              total={streamTotal}
-              isActive={isTranslating}
-            />
 
             <div
               ref={outputRef}
@@ -280,7 +248,7 @@ export default function App() {
                       className="stream-spinner inline-block h-4 w-4 rounded-full border-2 border-slate-200 border-t-indigo-500"
                       aria-hidden
                     />
-                    Waiting for first sentence…
+                    Translating…
                   </div>
                   <div className="space-y-2 animate-pulse">
                     <div className="h-3 w-full rounded bg-slate-100" />
@@ -292,16 +260,6 @@ export default function App() {
                 <p className="text-sm text-slate-400">
                   Translation will appear here.
                 </p>
-              )}
-
-              {isTranslating && outputText && (
-                <div className="mt-4 flex items-center gap-2 border-t border-slate-100 pt-3 text-xs text-slate-400">
-                  <span
-                    className="stream-spinner inline-block h-3 w-3 rounded-full border-2 border-slate-200 border-t-indigo-400"
-                    aria-hidden
-                  />
-                  More text incoming…
-                </div>
               )}
             </div>
           </section>
@@ -332,16 +290,22 @@ export default function App() {
           </div>
         </section>
 
-        <footer className="mt-10 text-center text-xs text-slate-400">
-          Powered by{" "}
-          <a
-            href="https://huggingface.co/sensix-zo/nllb-paite-600m-v15"
-            target="_blank"
-            rel="noreferrer"
-            className="text-indigo-600 hover:underline"
-          >
-            sensix-zo/nllb-paite-600m-v15
-          </a>
+        <footer className="mt-10 space-y-2 text-center text-xs text-slate-400">
+          <p>
+            Paite is a Zomi language. This tool helps Zomi speakers, learners,
+            and diaspora communities translate between English and Paite.
+          </p>
+          <p>
+            Powered by{" "}
+            <a
+              href="https://huggingface.co/sensix-zo/nllb-paite-600m-v15"
+              target="_blank"
+              rel="noreferrer"
+              className="text-indigo-600 hover:underline"
+            >
+              sensix-zo/nllb-paite-600m-v15
+            </a>
+          </p>
         </footer>
       </div>
     </div>
