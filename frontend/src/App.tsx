@@ -153,18 +153,20 @@ export default function App() {
         controller.signal,
       );
       if (result.translation) {
-        if (result.googleCharsUsed && result.googleCharsUsed > 0) {
-          await incrementGoogleQuota(result.googleCharsUsed);
-          await refreshQuota();
-        }
-        void saveTranslationLog({
-          srcLang: src,
-          tgtLang: tgt,
-          srcText: text,
-          tgtText: result.translation,
-          route: result.route,
-          pivotEnglish: result.pivotEnglish,
-        });
+        void (async () => {
+          if (result.googleCharsUsed && result.googleCharsUsed > 0) {
+            await incrementGoogleQuota(result.googleCharsUsed);
+            await refreshQuota();
+          }
+          await saveTranslationLog({
+            srcLang: src,
+            tgtLang: tgt,
+            srcText: text,
+            tgtText: result.translation,
+            route: result.route,
+            pivotEnglish: result.pivotEnglish,
+          });
+        })();
       }
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") return;
