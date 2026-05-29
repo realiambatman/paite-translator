@@ -3,13 +3,37 @@
 ENGLISH = "eng_Latn"
 PAITE = "pai_Latn"
 
+COMMON_LANGUAGE_ORDER = [
+    ENGLISH,
+    PAITE,
+    "lus_Latn",
+    "mni_Beng",
+    "mya_Mymr",
+    "hin_Deva",
+]
+
 LANGUAGES: dict[str, dict] = {
-    ENGLISH: {"label": "English", "google": "en", "provider": "hf"},
-    PAITE: {"label": "Paite", "google": None, "provider": "hf"},
-    "lus_Latn": {"label": "Mizo", "google": "lus", "provider": "google"},
-    "mni_Beng": {"label": "Meitei", "google": "mni-Mtei", "provider": "google"},
-    "mya_Mymr": {"label": "Burmese", "google": "my", "provider": "google"},
-    "hin_Deva": {"label": "Hindi", "google": "hi", "provider": "google"},
+    ENGLISH: {"label": "English", "google": "en", "provider": "hf", "common": True},
+    PAITE: {"label": "Paite", "google": None, "provider": "hf", "common": True},
+    "lus_Latn": {"label": "Mizo", "google": "lus", "provider": "google", "common": True},
+    "mni_Beng": {
+        "label": "Meitei",
+        "google": "mni-Mtei",
+        "provider": "google",
+        "common": True,
+    },
+    "mya_Mymr": {"label": "Burmese", "google": "my", "provider": "google", "common": True},
+    "hin_Deva": {"label": "Hindi", "google": "hi", "provider": "google", "common": True},
+    "asm_Beng": {"label": "Assamese", "google": "as", "provider": "google", "common": False},
+    "ben_Beng": {"label": "Bengali", "google": "bn", "provider": "google", "common": False},
+    "brx_Deva": {"label": "Bodo", "google": "brx", "provider": "google", "common": False},
+    "zho_Hans": {"label": "Chinese", "google": "zh-CN", "provider": "google", "common": False},
+    "fra_Latn": {"label": "French", "google": "fr", "provider": "google", "common": False},
+    "ind_Latn": {"label": "Indonesian", "google": "id", "provider": "google", "common": False},
+    "kha_Latn": {"label": "Khasi", "google": "kha", "provider": "google", "common": False},
+    "trp_Latn": {"label": "Kokborok", "google": "trp", "provider": "google", "common": False},
+    "rus_Cyrl": {"label": "Russian", "google": "ru", "provider": "google", "common": False},
+    "spa_Latn": {"label": "Spanish", "google": "es", "provider": "google", "common": False},
 }
 
 HF_LANGUAGES = {ENGLISH, PAITE}
@@ -31,15 +55,28 @@ def google_code(code: str) -> str | None:
     return entry.get("google")
 
 
+def _language_entry(code: str, meta: dict) -> dict:
+    return {
+        "code": code,
+        "label": meta["label"],
+        "provider": meta["provider"],
+        "common": bool(meta.get("common")),
+    }
+
+
 def languages_for_api() -> list[dict]:
-    return [
-        {
-            "code": code,
-            "label": meta["label"],
-            "provider": meta["provider"],
-        }
-        for code, meta in LANGUAGES.items()
+    common = [
+        _language_entry(code, LANGUAGES[code]) for code in COMMON_LANGUAGE_ORDER
     ]
+    others = sorted(
+        [
+            _language_entry(code, meta)
+            for code, meta in LANGUAGES.items()
+            if not meta.get("common")
+        ],
+        key=lambda entry: entry["label"].lower(),
+    )
+    return common + others
 
 
 def uses_google(src: str, tgt: str) -> bool:

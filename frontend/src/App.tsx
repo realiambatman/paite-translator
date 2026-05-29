@@ -8,21 +8,11 @@ import {
 } from "./services/api";
 import { analyzeInput, DEFAULT_MAX_TOKENS } from "./utils/textLimits";
 import { saveTranslationLog } from "./services/translationLog";
-import {
-  fetchGoogleQuota,
-  incrementGoogleQuota,
-} from "./services/googleQuota";
+import { fetchGoogleQuota, incrementGoogleQuota } from "./services/googleQuota";
+import { FALLBACK_LANGUAGES } from "./languages";
+import { LanguageSelect } from "./components/LanguageSelect";
 
 const HF_LANGS = new Set<LangCode>(["eng_Latn", "pai_Latn"]);
-
-const FALLBACK_LANGUAGES: Language[] = [
-  { code: "eng_Latn", label: "English", provider: "hf" },
-  { code: "pai_Latn", label: "Paite", provider: "hf" },
-  { code: "lus_Latn", label: "Mizo", provider: "google" },
-  { code: "mni_Beng", label: "Meitei", provider: "google" },
-  { code: "mya_Mymr", label: "Burmese", provider: "google" },
-  { code: "hin_Deva", label: "Hindi", provider: "google" },
-];
 
 const EXAMPLES: { text: string; src: LangCode; tgt: LangCode }[] = [
   {
@@ -89,9 +79,7 @@ export default function App() {
   const visibleExamples = useMemo(
     () =>
       googleQuotaExceeded
-        ? EXAMPLES.filter(
-            (ex) => !needsGoogleRoute(ex.src, ex.tgt),
-          )
+        ? EXAMPLES.filter((ex) => !needsGoogleRoute(ex.src, ex.tgt))
         : EXAMPLES,
     [googleQuotaExceeded],
   );
@@ -237,8 +225,8 @@ export default function App() {
               Zomi Paite Translator
             </h1>
             <p className="mt-1 max-w-lg text-sm text-zomi-muted">
-              Translate Paite with English, Mizo, Meitei, Burmese, and Hindi
-              for the Zomi community.
+              Translate Paite with English, Mizo, Meitei, Burmese, Hindi, and
+              more regional and world languages via Google Translate.
             </p>
           </div>
           <p className="text-xs text-zomi-muted sm:text-right">
@@ -254,18 +242,12 @@ export default function App() {
           <div className="zomi-stripe h-1" />
 
           <div className="flex flex-wrap items-center gap-2 border-b border-stone-300/40 px-4 py-3">
-            <select
+            <LanguageSelect
               value={srcLang}
-              onChange={(e) => setSrcLang(e.target.value as LangCode)}
+              onChange={setSrcLang}
+              languages={availableLanguages}
               disabled={isTranslating}
-              className="rounded-lg border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm font-medium text-zomi-ink outline-none focus:border-zomi-red/50 disabled:opacity-60"
-            >
-              {availableLanguages.map((lang) => (
-                <option key={lang.code} value={lang.code}>
-                  {lang.label}
-                </option>
-              ))}
-            </select>
+            />
 
             <button
               type="button"
@@ -277,18 +259,12 @@ export default function App() {
               ⇄
             </button>
 
-            <select
+            <LanguageSelect
               value={tgtLang}
-              onChange={(e) => setTgtLang(e.target.value as LangCode)}
+              onChange={setTgtLang}
+              languages={availableLanguages}
               disabled={isTranslating}
-              className="rounded-lg border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm font-medium text-zomi-ink outline-none focus:border-zomi-red/50 disabled:opacity-60"
-            >
-              {availableLanguages.map((lang) => (
-                <option key={lang.code} value={lang.code}>
-                  {lang.label}
-                </option>
-              ))}
-            </select>
+            />
 
             <button
               type="button"

@@ -1,17 +1,12 @@
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
-export type LangCode =
-  | "eng_Latn"
-  | "pai_Latn"
-  | "lus_Latn"
-  | "mni_Beng"
-  | "mya_Mymr"
-  | "hin_Deva";
+export type LangCode = string;
 
 export interface Language {
   code: LangCode;
   label: string;
   provider: "hf" | "google";
+  common?: boolean;
 }
 
 export interface TranslationLimits {

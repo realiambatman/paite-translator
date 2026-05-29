@@ -5,12 +5,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from static_files import SpaStaticFiles
 from translation import TranslationEngine
 
 engine = TranslationEngine()
+
+BUILD_ID = os.environ.get("BUILD_ID", "dev")
 
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*").split(",")
 STATIC_DIR = os.environ.get("STATIC_DIR")
@@ -52,6 +54,11 @@ class TranslateResponse(BaseModel):
 @app.get("/api/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/api/version")
+def version():
+    return {"build": BUILD_ID}
 
 
 @app.get("/api/status")
@@ -143,4 +150,4 @@ def translate_stream(body: TranslateRequest):
 
 
 if STATIC_DIR and os.path.isdir(STATIC_DIR):
-    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+    app.mount("/", SpaStaticFiles(directory=STATIC_DIR, html=True), name="static")
