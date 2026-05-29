@@ -219,10 +219,10 @@ export default function App() {
         : "bg-zomi-red/70";
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-zomi-cream text-zomi-ink">
-      <div className="pointer-events-none absolute -right-32 -top-32 h-96 w-96 rounded-full bg-zomi-gold/10 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-32 -left-32 h-96 w-96 rounded-full bg-zomi-red/10 blur-3xl" />
-      <div className="zomi-pattern pointer-events-none absolute inset-0 opacity-60" />
+    <div className="relative min-h-screen overflow-hidden bg-zomi-canvas-mobile text-zomi-ink md:bg-zomi-cream">
+      <div className="pointer-events-none absolute -right-32 -top-32 h-96 w-96 rounded-full bg-zomi-gold/10 blur-3xl max-md:opacity-50" />
+      <div className="pointer-events-none absolute -bottom-32 -left-32 h-96 w-96 rounded-full bg-zomi-red/10 blur-3xl max-md:opacity-50" />
+      <div className="zomi-pattern pointer-events-none absolute inset-0 opacity-25 max-md:opacity-20 md:opacity-60" />
       <div className="pointer-events-none absolute left-1/2 top-24 -translate-x-1/2 select-none font-serif text-[clamp(6rem,18vw,14rem)] font-bold leading-none tracking-tighter text-zomi-ink/[0.03]">
         ZOMI
       </div>
@@ -250,15 +250,15 @@ export default function App() {
           </p>
         </header>
 
-        <div className="overflow-hidden rounded-2xl border border-stone-300/50 bg-zomi-paper/80 shadow-[0_8px_30px_rgb(28_25_23/0.06)] backdrop-blur-sm">
+        <div className="overflow-hidden rounded-2xl border border-stone-300 bg-white shadow-[0_8px_32px_rgb(28_25_23/0.14)] max-md:shadow-[0_10px_40px_rgb(28_25_23/0.18)] md:border-stone-300/50 md:bg-zomi-paper/80 md:shadow-[0_8px_30px_rgb(28_25_23/0.06)] md:backdrop-blur-sm">
           <div className="zomi-stripe h-1" />
 
-          <div className="flex flex-wrap items-center gap-2 border-b border-stone-300/40 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2 border-b border-stone-300/70 bg-stone-50/80 px-4 py-3 max-md:bg-stone-100/90 md:border-stone-300/40 md:bg-transparent">
             <select
               value={srcLang}
               onChange={(e) => setSrcLang(e.target.value as LangCode)}
               disabled={isTranslating}
-              className="rounded-lg border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm font-medium text-zomi-ink outline-none focus:border-zomi-red/50 disabled:opacity-60"
+              className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium text-zomi-ink outline-none focus:border-zomi-red/50 disabled:opacity-60 max-md:border-stone-400/70 md:border-stone-300/60 md:bg-zomi-cream"
             >
               {availableLanguages.map((lang) => (
                 <option key={lang.code} value={lang.code}>
@@ -271,7 +271,7 @@ export default function App() {
               type="button"
               onClick={handleSwap}
               disabled={isTranslating}
-              className="rounded-full border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm text-zomi-red transition hover:border-zomi-red/30 hover:bg-white disabled:opacity-60"
+              className="rounded-full border border-stone-300 bg-white px-3 py-1.5 text-sm text-zomi-red transition hover:border-zomi-red/30 hover:bg-stone-50 disabled:opacity-60 max-md:border-stone-400/70 md:border-stone-300/60 md:bg-zomi-cream md:hover:bg-white"
               aria-label="Swap languages"
             >
               ⇄
@@ -281,7 +281,7 @@ export default function App() {
               value={tgtLang}
               onChange={(e) => setTgtLang(e.target.value as LangCode)}
               disabled={isTranslating}
-              className="rounded-lg border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm font-medium text-zomi-ink outline-none focus:border-zomi-red/50 disabled:opacity-60"
+              className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium text-zomi-ink outline-none focus:border-zomi-red/50 disabled:opacity-60 max-md:border-stone-400/70 md:border-stone-300/60 md:bg-zomi-cream"
             >
               {availableLanguages.map((lang) => (
                 <option key={lang.code} value={lang.code}>
@@ -326,8 +326,8 @@ export default function App() {
           )}
 
           <div className="grid md:grid-cols-2 md:divide-x md:divide-stone-300/40">
-            <section className="flex min-h-[340px] flex-col md:min-h-[420px]">
-              <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-zomi-muted">
+            <section className="flex min-h-[340px] flex-col bg-white max-md:border-b max-md:border-stone-300/70 md:min-h-[420px]">
+              <div className="border-b border-stone-200/80 bg-stone-50 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-zomi-muted max-md:border-stone-300/60 md:border-0 md:bg-transparent">
                 {langLabel(languages, srcLang)}
               </div>
               <textarea
@@ -335,9 +335,9 @@ export default function App() {
                 onChange={(e) => setInputText(e.target.value)}
                 placeholder="Enter one sentence to translate…"
                 disabled={isTranslating}
-                className="min-h-[280px] flex-1 resize-none border-0 bg-transparent px-4 pb-2 text-base leading-relaxed text-zomi-ink outline-none placeholder:text-stone-400 disabled:opacity-70 md:min-h-[360px]"
+                className="min-h-[280px] flex-1 resize-none border-0 bg-white px-4 pb-2 text-base leading-relaxed text-zomi-ink outline-none placeholder:text-stone-400 disabled:opacity-70 max-md:min-h-[240px] md:min-h-[360px] md:bg-transparent"
               />
-              <div className="border-t border-stone-300/30 px-4 py-3">
+              <div className="border-t border-stone-300/60 bg-stone-50/90 px-4 py-3 max-md:border-stone-300/70 md:border-stone-300/30 md:bg-transparent">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
                   <span
                     className={
@@ -355,7 +355,7 @@ export default function App() {
                   </span>
                 </div>
                 <div
-                  className="h-1.5 overflow-hidden rounded-full bg-stone-200/80"
+                  className="h-1.5 overflow-hidden rounded-full bg-stone-300/70 max-md:bg-stone-300 md:bg-stone-200/80"
                   role="progressbar"
                   aria-valuenow={Math.round(inputAnalysis.tokenRatio * 100)}
                   aria-valuemin={0}
@@ -372,13 +372,13 @@ export default function App() {
               </div>
             </section>
 
-            <section className="flex min-h-[340px] flex-col border-t border-stone-300/40 md:min-h-[420px] md:border-t-0">
-              <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-zomi-red-dark">
+            <section className="flex min-h-[340px] flex-col border-t border-stone-300/70 bg-zomi-paper-dark md:min-h-[420px] md:border-t-0 md:bg-transparent">
+              <div className="border-b border-stone-300/50 bg-zomi-paper px-4 py-2 text-xs font-semibold uppercase tracking-wider text-zomi-red-dark max-md:border-stone-300/60 md:border-0 md:bg-transparent">
                 {langLabel(languages, tgtLang)}
               </div>
               <div
                 ref={outputRef}
-                className="min-h-[280px] flex-1 overflow-y-auto px-4 pb-4 md:min-h-[360px]"
+                className="min-h-[280px] flex-1 overflow-y-auto bg-zomi-paper-dark px-4 pb-4 max-md:min-h-[240px] md:min-h-[360px] md:bg-transparent"
               >
                 {outputText ? (
                   <p className="whitespace-pre-wrap font-serif text-base leading-relaxed text-zomi-ink">
@@ -432,7 +432,7 @@ export default function App() {
                 type="button"
                 onClick={() => handleExample(example)}
                 disabled={isTranslating || !modelReady}
-                className="min-w-[220px] max-w-xs shrink-0 rounded-xl border border-stone-300/50 bg-zomi-paper/60 p-3 text-left text-sm text-zomi-ink transition hover:border-zomi-red/30 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                className="min-w-[220px] max-w-xs shrink-0 rounded-xl border border-stone-300 bg-white p-3 text-left text-sm text-zomi-ink shadow-sm transition hover:border-zomi-red/30 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50 max-md:border-stone-400/60 md:border-stone-300/50 md:bg-zomi-paper/60 md:shadow-none md:hover:bg-white"
               >
                 <span className="line-clamp-3">{example.text}</span>
               </button>
