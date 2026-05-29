@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from static_files import SpaStaticFiles
@@ -58,7 +58,13 @@ def health():
 
 @app.get("/api/version")
 def version():
-    return {"build": BUILD_ID}
+    return JSONResponse(
+        content={"build": BUILD_ID},
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 @app.get("/api/status")
