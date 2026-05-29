@@ -233,19 +233,20 @@ class TranslationEngine:
         return result
 
     def translate_stream(self, text: str, src_lang: str, tgt_lang: str):
-        """Yield partial translations sentence-by-sentence for streaming UI."""
+        """Yield partial translations with progress for streaming UI."""
         self._validate_request(text, src_lang, tgt_lang)
 
         if not text or not text.strip():
-            yield ""
+            yield {"translation": "", "current": 0, "total": 0}
             return
         if src_lang == tgt_lang:
-            yield text
+            yield {"translation": text, "current": 1, "total": 1}
             return
 
         all_sentences, para_structures = self._split_document(text)
+        total = len(all_sentences)
         if not all_sentences:
-            yield ""
+            yield {"translation": "", "current": 0, "total": 0}
             return
 
         translated_sentences: list[str] = []
@@ -253,8 +254,14 @@ class TranslationEngine:
 
         for i in range(0, len(all_sentences), batch_size):
             batch = all_sentences[i : i + batch_size]
-            translated_sentences.extend(self._translate_batch(batch, src_lang, tgt_lang, batch_size))
+            translated_sentences.extend(
+                self._translate_batch(batch, src_lang, tgt_lang, batch_size)
+            )
             partial = self._reconstruct(para_structures, translated_sentences)
             if tgt_lang == "pai_Latn":
                 partial = fix_bullet_points(partial)
-            yield partial
+            yield {
+                "translation": partial,
+                "current": len(translated_sentences),
+                "total": total,
+            }

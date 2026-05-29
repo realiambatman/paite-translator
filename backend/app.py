@@ -87,14 +87,32 @@ def translate_stream(body: TranslateRequest):
 
     def event_stream():
         partial = ""
+        current = 0
+        total = 0
         try:
-            for partial in engine.translate_stream(body.text, body.src_lang, body.tgt_lang):
+            for chunk in engine.translate_stream(body.text, body.src_lang, body.tgt_lang):
+                partial = chunk["translation"]
+                current = chunk["current"]
+                total = chunk["total"]
                 payload = json.dumps(
-                    {"translation": partial, "done": False},
+                    {
+                        "translation": partial,
+                        "current": current,
+                        "total": total,
+                        "done": False,
+                    },
                     ensure_ascii=False,
                 )
                 yield f"data: {payload}\n\n"
-            final = json.dumps({"translation": partial, "done": True}, ensure_ascii=False)
+            final = json.dumps(
+                {
+                    "translation": partial,
+                    "current": current,
+                    "total": total,
+                    "done": True,
+                },
+                ensure_ascii=False,
+            )
             yield f"data: {final}\n\n"
         except ValueError as exc:
             payload = json.dumps({"error": str(exc), "done": True}, ensure_ascii=False)

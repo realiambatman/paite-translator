@@ -43,15 +43,23 @@ export function fetchStatus(): Promise<ModelStatus> {
 
 export interface TranslateStreamEvent {
   translation?: string;
+  current?: number;
+  total?: number;
   done: boolean;
   error?: string;
+}
+
+export interface StreamUpdate {
+  translation: string;
+  current: number;
+  total: number;
 }
 
 export function translateTextStream(
   text: string,
   srcLang: LangCode,
   tgtLang: LangCode,
-  onChunk: (translation: string) => void,
+  onChunk: (update: StreamUpdate) => void,
   signal?: AbortSignal,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -93,7 +101,13 @@ export function translateTextStream(
             if (!line.startsWith("data: ")) continue;
             const event = JSON.parse(line.slice(6)) as TranslateStreamEvent;
             if (event.error) throw new Error(event.error);
-            if (event.translation !== undefined) onChunk(event.translation);
+            if (event.translation !== undefined) {
+              onChunk({
+                translation: event.translation,
+                current: event.current ?? 0,
+                total: event.total ?? 0,
+              });
+            }
           }
         }
         resolve();

@@ -7,3 +7,48 @@ body {
   background: #f8fafc;
   color: #0f172a;
 }
+
+@keyframes stream-cursor-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes stream-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes stream-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.stream-cursor {
+  animation: stream-cursor-blink 1s step-end infinite;
+}
+
+.stream-shimmer-bar {
+  background: linear-gradient(
+    90deg,
+    #e0e7ff 0%,
+    #6366f1 50%,
+    #e0e7ff 100%
+  );
+  background-size: 200% 100%;
+  animation: stream-shimmer 1.5s ease-in-out infinite;
+}
+
+.stream-spinner {
+  animation: stream-spin 0.8s linear infinite;
+}

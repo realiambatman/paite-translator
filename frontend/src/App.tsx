@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import StreamProgress from "./components/StreamProgress";
 import {
   fetchStatus,
   type LangCode,
@@ -40,8 +41,11 @@ export default function App() {
   const [srcLang, setSrcLang] = useState<LangCode>("eng_Latn");
   const [tgtLang, setTgtLang] = useState<LangCode>("pai_Latn");
   const [isTranslating, setIsTranslating] = useState(false);
+  const [streamCurrent, setStreamCurrent] = useState(0);
+  const [streamTotal, setStreamTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const outputRef = useRef<HTMLDivElement>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -59,6 +63,12 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [refreshStatus]);
 
+  useEffect(() => {
+    if (isTranslating && outputRef.current) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    }
+  }, [outputText, isTranslating]);
+
   const runTranslation = async (
     text: string,
     src: LangCode,
@@ -73,13 +83,19 @@ export default function App() {
     setIsTranslating(true);
     setError(null);
     setOutputText("");
+    setStreamCurrent(0);
+    setStreamTotal(0);
 
     try {
       await translateTextStream(
         text,
         src,
         tgt,
-        (partial) => setOutputText(partial),
+        ({ translation, current, total }) => {
+          setOutputText(translation);
+          setStreamCurrent(current);
+          setStreamTotal(total);
+        },
         controller.signal,
       );
     } catch (err) {
@@ -149,7 +165,8 @@ export default function App() {
             <select
               value={srcLang}
               onChange={(e) => setSrcLang(e.target.value as LangCode)}
-              className="min-w-[140px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+              disabled={isTranslating}
+              className="min-w-[140px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 disabled:opacity-60"
             >
               {LANGUAGES.map((lang) => (
                 <option key={lang.code} value={lang.code}>
@@ -162,7 +179,8 @@ export default function App() {
           <button
             type="button"
             onClick={handleSwap}
-            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
+            disabled={isTranslating}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
             aria-label="Swap languages"
           >
             ⇄ Swap
@@ -173,7 +191,8 @@ export default function App() {
             <select
               value={tgtLang}
               onChange={(e) => setTgtLang(e.target.value as LangCode)}
-              className="min-w-[140px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+              disabled={isTranslating}
+              className="min-w-[140px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 disabled:opacity-60"
             >
               {LANGUAGES.map((lang) => (
                 <option key={lang.code} value={lang.code}>
@@ -193,42 +212,96 @@ export default function App() {
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               placeholder="Enter text or paste a document here…"
-              className="min-h-[280px] flex-1 resize-none border-0 bg-transparent px-4 py-3 text-base leading-relaxed text-slate-900 outline-none placeholder:text-slate-400"
+              disabled={isTranslating}
+              className="min-h-[280px] flex-1 resize-none border-0 bg-transparent px-4 py-3 text-base leading-relaxed text-slate-900 outline-none placeholder:text-slate-400 disabled:opacity-70"
             />
             <div className="border-t border-slate-100 px-4 py-3">
               <button
                 type="button"
                 onClick={handleTranslate}
                 disabled={!inputText.trim() || isTranslating || !modelReady}
-                className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
               >
+                {isTranslating && (
+                  <span
+                    className="stream-spinner inline-block h-4 w-4 rounded-full border-2 border-white/30 border-t-white"
+                    aria-hidden
+                  />
+                )}
                 {isTranslating ? "Translating…" : "Translate"}
               </button>
             </div>
           </section>
 
-          <section className="flex min-h-[360px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-100 px-4 py-3 text-sm font-medium text-slate-600">
-              Translation ({langLabel(tgtLang)})
+          <section
+            className={`flex min-h-[360px] flex-col overflow-hidden rounded-2xl border bg-white shadow-sm transition-colors duration-300 ${
+              isTranslating
+                ? "border-indigo-300 ring-2 ring-indigo-100"
+                : "border-slate-200"
+            }`}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 text-sm font-medium text-slate-600">
+              <span>Translation ({langLabel(tgtLang)})</span>
+              {isTranslating && (
+                <span className="flex items-center gap-1.5 text-xs font-normal text-indigo-600">
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-500" />
+                  </span>
+                  Live
+                </span>
+              )}
             </div>
-            <div className="min-h-[280px] flex-1 overflow-y-auto px-4 py-3">
+
+            <StreamProgress
+              current={streamCurrent}
+              total={streamTotal}
+              isActive={isTranslating}
+            />
+
+            <div
+              ref={outputRef}
+              className="min-h-[280px] flex-1 overflow-y-auto px-4 py-3"
+            >
               {outputText ? (
                 <p className="whitespace-pre-wrap text-base leading-relaxed text-slate-900">
                   {outputText}
                   {isTranslating && (
-                    <span className="ml-1 inline-block h-4 w-0.5 animate-pulse bg-indigo-500 align-middle" />
+                    <span
+                      className="stream-cursor ml-0.5 inline-block h-[1.1em] w-0.5 translate-y-px bg-indigo-500 align-middle"
+                      aria-hidden
+                    />
                   )}
                 </p>
               ) : isTranslating ? (
-                <div className="flex items-center gap-2 text-slate-500">
-                  <span className="h-2 w-2 animate-bounce rounded-full bg-indigo-400 [animation-delay:0ms]" />
-                  <span className="h-2 w-2 animate-bounce rounded-full bg-indigo-400 [animation-delay:150ms]" />
-                  <span className="h-2 w-2 animate-bounce rounded-full bg-indigo-400 [animation-delay:300ms]" />
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-sm text-slate-500">
+                    <span
+                      className="stream-spinner inline-block h-4 w-4 rounded-full border-2 border-slate-200 border-t-indigo-500"
+                      aria-hidden
+                    />
+                    Waiting for first sentence…
+                  </div>
+                  <div className="space-y-2 animate-pulse">
+                    <div className="h-3 w-full rounded bg-slate-100" />
+                    <div className="h-3 w-11/12 rounded bg-slate-100" />
+                    <div className="h-3 w-4/5 rounded bg-slate-100" />
+                  </div>
                 </div>
               ) : (
                 <p className="text-sm text-slate-400">
                   Translation will appear here.
                 </p>
+              )}
+
+              {isTranslating && outputText && (
+                <div className="mt-4 flex items-center gap-2 border-t border-slate-100 pt-3 text-xs text-slate-400">
+                  <span
+                    className="stream-spinner inline-block h-3 w-3 rounded-full border-2 border-slate-200 border-t-indigo-400"
+                    aria-hidden
+                  />
+                  More text incoming…
+                </div>
               )}
             </div>
           </section>
