@@ -1,36 +1,49 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchStatus,
   type LangCode,
+  type Language,
   type ModelStatus,
   translateTextStream,
 } from "./services/api";
+import { analyzeInput, DEFAULT_MAX_TOKENS } from "./utils/textLimits";
 
-const LANGUAGES: { code: LangCode; label: string }[] = [
-  { code: "eng_Latn", label: "English" },
-  { code: "pai_Latn", label: "Paite" },
+const HF_LANGS = new Set<LangCode>(["eng_Latn", "pai_Latn"]);
+
+const FALLBACK_LANGUAGES: Language[] = [
+  { code: "eng_Latn", label: "English", provider: "hf" },
+  { code: "pai_Latn", label: "Paite", provider: "hf" },
+  { code: "lus_Latn", label: "Mizo", provider: "google" },
+  { code: "mni_Beng", label: "Meitei", provider: "google" },
+  { code: "mya_Mymr", label: "Burmese", provider: "google" },
+  { code: "hin_Deva", label: "Hindi", provider: "google" },
 ];
 
 const EXAMPLES: { text: string; src: LangCode; tgt: LangCode }[] = [
   {
-    text: "Hello, how are you today? I hope you are doing well.",
+    text: "Hello, how are you today?",
     src: "eng_Latn",
     tgt: "pai_Latn",
   },
   {
-    text: "The Zomi people have a rich cultural heritage and a strong tradition of oral folklore.",
-    src: "eng_Latn",
+    text: "नमस्ते, आप कैसे हैं?",
+    src: "hin_Deva",
     tgt: "pai_Latn",
   },
   {
-    text: "Here are the main points:\n1. Introduction and identity.\n2. Language and culture.\n3. Religion.\n4. Modern Context and Diaspora.",
-    src: "eng_Latn",
+    text: "Chibai, i dam em?",
+    src: "lus_Latn",
     tgt: "pai_Latn",
   },
 ];
 
-function langLabel(code: LangCode) {
-  return LANGUAGES.find((l) => l.code === code)?.label ?? code;
+function needsGoogleRoute(src: LangCode, tgt: LangCode): boolean {
+  if (src === tgt) return false;
+  return !(HF_LANGS.has(src) && HF_LANGS.has(tgt));
+}
+
+function langLabel(languages: Language[], code: LangCode) {
+  return languages.find((lang) => lang.code === code)?.label ?? code;
 }
 
 export default function App() {
@@ -43,6 +56,16 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const outputRef = useRef<HTMLDivElement>(null);
+
+  const languages = status?.languages ?? FALLBACK_LANGUAGES;
+  const maxTokens = status?.limits?.max_tokens ?? DEFAULT_MAX_TOKENS;
+  const googleEnabled = status?.google_translate_enabled ?? false;
+  const googleRequired = needsGoogleRoute(srcLang, tgtLang);
+
+  const inputAnalysis = useMemo(
+    () => analyzeInput(inputText, maxTokens),
+    [inputText, maxTokens],
+  );
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -66,12 +89,14 @@ export default function App() {
     }
   }, [outputText, isTranslating]);
 
-  const runTranslation = async (
-    text: string,
-    src: LangCode,
-    tgt: LangCode,
-  ) => {
-    if (!text.trim()) return;
+  const runTranslation = async (text: string, src: LangCode, tgt: LangCode) => {
+    if (!text.trim() || !analyzeInput(text, maxTokens).valid) return;
+    if (needsGoogleRoute(src, tgt) && !googleEnabled) {
+      setError(
+        "This language pair needs Google Translate. Add GOOGLE_TRANSLATE_API_KEY on the server.",
+      );
+      return;
+    }
 
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -117,194 +142,251 @@ export default function App() {
   };
 
   const modelReady = status?.ready ?? false;
+  const canTranslate =
+    inputAnalysis.valid &&
+    !isTranslating &&
+    modelReady &&
+    (!googleRequired || googleEnabled);
+  const barColor =
+    inputAnalysis.overTokens || inputAnalysis.multiSentence
+      ? "bg-zomi-red"
+      : inputAnalysis.tokenRatio >= 0.85
+        ? "bg-zomi-gold"
+        : "bg-zomi-red/70";
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100">
-      <div className="mx-auto max-w-6xl px-4 py-8 md:py-12">
-        <header className="mb-8 text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">
-            Zomi Paite Translator
-          </h1>
-          <p className="mt-1 text-lg font-medium text-slate-700">
-            English ↔ Paite (Zomi Language)
-          </p>
-          <p className="mt-2 max-w-2xl mx-auto text-slate-600">
-            Translate English and Paite for the Zomi community. Long documents,
-            sermons, and notes keep their original formatting.
-          </p>
+    <div className="relative min-h-screen overflow-hidden bg-zomi-cream text-zomi-ink">
+      <div className="pointer-events-none absolute -right-32 -top-32 h-96 w-96 rounded-full bg-zomi-gold/10 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-32 -left-32 h-96 w-96 rounded-full bg-zomi-red/10 blur-3xl" />
+      <div className="zomi-pattern pointer-events-none absolute inset-0 opacity-60" />
+      <div className="pointer-events-none absolute left-1/2 top-24 -translate-x-1/2 select-none font-serif text-[clamp(6rem,18vw,14rem)] font-bold leading-none tracking-tighter text-zomi-ink/[0.03]">
+        ZOMI
+      </div>
 
-          <div className="mt-4 inline-flex flex-wrap items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600 shadow-sm">
-            {modelReady ? (
-              <>
-                <span>Model ready</span>
-                <span className="text-slate-300">·</span>
-                <span>{status?.device}</span>
-                <span className="text-slate-300">·</span>
-                <span>{status?.quantization}</span>
-              </>
-            ) : (
-              <span>Loading model from Hugging Face…</span>
-            )}
+      <div className="relative mx-auto max-w-7xl px-4 py-5 md:px-8 md:py-8">
+        <header className="mb-5 flex flex-col gap-3 border-b border-stone-300/40 pb-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zomi-gold">
+              Paite · Zomi Language
+            </p>
+            <h1 className="font-serif text-2xl font-bold tracking-tight text-zomi-ink md:text-3xl">
+              Zomi Paite Translator
+            </h1>
+            <p className="mt-1 max-w-lg text-sm text-zomi-muted">
+              Translate Paite with English, Mizo, Meitei, Burmese, and Hindi
+              for the Zomi community.
+            </p>
           </div>
+          <p className="text-xs text-zomi-muted sm:text-right">
+            {modelReady ? (
+              <>Model ready · {status?.device}</>
+            ) : (
+              "Loading model from Hugging Face…"
+            )}
+          </p>
         </header>
 
-        <div className="mb-4 flex flex-wrap items-end justify-center gap-3">
-          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
-            Source
+        <div className="overflow-hidden rounded-2xl border border-stone-300/50 bg-zomi-paper/80 shadow-[0_8px_30px_rgb(28_25_23/0.06)] backdrop-blur-sm">
+          <div className="zomi-stripe h-1" />
+
+          <div className="flex flex-wrap items-center gap-2 border-b border-stone-300/40 px-4 py-3">
             <select
               value={srcLang}
               onChange={(e) => setSrcLang(e.target.value as LangCode)}
               disabled={isTranslating}
-              className="min-w-[140px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 disabled:opacity-60"
+              className="rounded-lg border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm font-medium text-zomi-ink outline-none focus:border-zomi-red/50 disabled:opacity-60"
             >
-              {LANGUAGES.map((lang) => (
+              {languages.map((lang) => (
                 <option key={lang.code} value={lang.code}>
                   {lang.label}
                 </option>
               ))}
             </select>
-          </label>
 
-          <button
-            type="button"
-            onClick={handleSwap}
-            disabled={isTranslating}
-            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
-            aria-label="Swap languages"
-          >
-            ⇄ Swap
-          </button>
+            <button
+              type="button"
+              onClick={handleSwap}
+              disabled={isTranslating}
+              className="rounded-full border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm text-zomi-red transition hover:border-zomi-red/30 hover:bg-white disabled:opacity-60"
+              aria-label="Swap languages"
+            >
+              ⇄
+            </button>
 
-          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
-            Target
             <select
               value={tgtLang}
               onChange={(e) => setTgtLang(e.target.value as LangCode)}
               disabled={isTranslating}
-              className="min-w-[140px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 disabled:opacity-60"
+              className="rounded-lg border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm font-medium text-zomi-ink outline-none focus:border-zomi-red/50 disabled:opacity-60"
             >
-              {LANGUAGES.map((lang) => (
+              {languages.map((lang) => (
                 <option key={lang.code} value={lang.code}>
                   {lang.label}
                 </option>
               ))}
             </select>
-          </label>
-        </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <section className="flex min-h-[360px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-100 px-4 py-3 text-sm font-medium text-slate-600">
-              Input ({langLabel(srcLang)})
-            </div>
-            <textarea
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              placeholder="Enter text or paste a document here…"
-              disabled={isTranslating}
-              className="min-h-[280px] flex-1 resize-none border-0 bg-transparent px-4 py-3 text-base leading-relaxed text-slate-900 outline-none placeholder:text-slate-400 disabled:opacity-70"
-            />
-            <div className="border-t border-slate-100 px-4 py-3">
-              <button
-                type="button"
-                onClick={handleTranslate}
-                disabled={!inputText.trim() || isTranslating || !modelReady}
-                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-              >
-                {isTranslating && (
-                  <span
-                    className="stream-spinner inline-block h-4 w-4 rounded-full border-2 border-white/30 border-t-white"
-                    aria-hidden
-                  />
-                )}
-                {isTranslating ? "Translating…" : "Translate"}
-              </button>
-            </div>
-          </section>
-
-          <section className="flex min-h-[360px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-100 px-4 py-3 text-sm font-medium text-slate-600">
-              Translation ({langLabel(tgtLang)})
-            </div>
-
-            <div
-              ref={outputRef}
-              className="min-h-[280px] flex-1 overflow-y-auto px-4 py-3"
+            <button
+              type="button"
+              onClick={handleTranslate}
+              disabled={!canTranslate}
+              className="ml-auto inline-flex items-center gap-2 rounded-full bg-zomi-red px-5 py-1.5 text-sm font-semibold text-white transition hover:bg-zomi-red-dark disabled:cursor-not-allowed disabled:bg-stone-300"
             >
-              {outputText ? (
-                <p className="whitespace-pre-wrap text-base leading-relaxed text-slate-900">
-                  {outputText}
-                  {isTranslating && (
-                    <span
-                      className="stream-cursor ml-0.5 inline-block h-[1.1em] w-0.5 translate-y-px bg-indigo-500 align-middle"
-                      aria-hidden
-                    />
-                  )}
-                </p>
-              ) : isTranslating ? (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2 text-sm text-slate-500">
-                    <span
-                      className="stream-spinner inline-block h-4 w-4 rounded-full border-2 border-slate-200 border-t-indigo-500"
-                      aria-hidden
-                    />
-                    Translating…
-                  </div>
-                  <div className="space-y-2 animate-pulse">
-                    <div className="h-3 w-full rounded bg-slate-100" />
-                    <div className="h-3 w-11/12 rounded bg-slate-100" />
-                    <div className="h-3 w-4/5 rounded bg-slate-100" />
-                  </div>
-                </div>
-              ) : (
-                <p className="text-sm text-slate-400">
-                  Translation will appear here.
-                </p>
+              {isTranslating && (
+                <span
+                  className="stream-spinner inline-block h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white"
+                  aria-hidden
+                />
               )}
-            </div>
-          </section>
+              {isTranslating ? "Translating…" : "Translate"}
+            </button>
+          </div>
+
+          {googleRequired && !googleEnabled && (
+            <p className="border-b border-amber-200/60 bg-amber-50/80 px-4 py-2 text-xs text-amber-900">
+              This pair uses Google Translate through English. Set{" "}
+              <code className="rounded bg-white/80 px-1">
+                GOOGLE_TRANSLATE_API_KEY
+              </code>{" "}
+              on the server.
+            </p>
+          )}
+
+          <div className="grid md:grid-cols-2 md:divide-x md:divide-stone-300/40">
+            <section className="flex min-h-[340px] flex-col md:min-h-[420px]">
+              <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-zomi-muted">
+                {langLabel(languages, srcLang)}
+              </div>
+              <textarea
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                placeholder="Enter one sentence to translate…"
+                disabled={isTranslating}
+                className="min-h-[280px] flex-1 resize-none border-0 bg-transparent px-4 pb-2 text-base leading-relaxed text-zomi-ink outline-none placeholder:text-stone-400 disabled:opacity-70 md:min-h-[360px]"
+              />
+              <div className="border-t border-stone-300/30 px-4 py-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span
+                    className={
+                      inputAnalysis.overTokens || inputAnalysis.multiSentence
+                        ? "font-medium text-zomi-red-dark"
+                        : "text-zomi-muted"
+                    }
+                  >
+                    {inputAnalysis.message}
+                  </span>
+                  <span className="tabular-nums text-zomi-muted">
+                    {inputAnalysis.words}{" "}
+                    {inputAnalysis.words === 1 ? "word" : "words"} · ~
+                    {inputAnalysis.tokens}/{maxTokens} tokens
+                  </span>
+                </div>
+                <div
+                  className="h-1.5 overflow-hidden rounded-full bg-stone-200/80"
+                  role="progressbar"
+                  aria-valuenow={Math.round(inputAnalysis.tokenRatio * 100)}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label="Estimated token usage"
+                >
+                  <div
+                    className={`h-full rounded-full transition-all duration-200 ${barColor}`}
+                    style={{
+                      width: `${Math.min(inputAnalysis.tokenRatio * 100, 100)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section className="flex min-h-[340px] flex-col border-t border-stone-300/40 md:min-h-[420px] md:border-t-0">
+              <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-zomi-red-dark">
+                {langLabel(languages, tgtLang)}
+              </div>
+              <div
+                ref={outputRef}
+                className="min-h-[280px] flex-1 overflow-y-auto px-4 pb-4 md:min-h-[360px]"
+              >
+                {outputText ? (
+                  <p className="whitespace-pre-wrap font-serif text-base leading-relaxed text-zomi-ink">
+                    {outputText}
+                    {isTranslating && (
+                      <span
+                        className="stream-cursor ml-0.5 inline-block h-[1.1em] w-0.5 translate-y-px bg-zomi-red align-middle"
+                        aria-hidden
+                      />
+                    )}
+                  </p>
+                ) : isTranslating ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-sm text-zomi-muted">
+                      <span
+                        className="stream-spinner inline-block h-4 w-4 rounded-full border-2 border-stone-300 border-t-zomi-red"
+                        aria-hidden
+                      />
+                      Translating…
+                    </div>
+                    <div className="space-y-2 animate-pulse">
+                      <div className="h-3 w-full rounded bg-stone-300/40" />
+                      <div className="h-3 w-11/12 rounded bg-stone-300/40" />
+                      <div className="h-3 w-4/5 rounded bg-stone-300/40" />
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-stone-400">
+                    Translation appears here
+                  </p>
+                )}
+              </div>
+            </section>
+          </div>
         </div>
 
         {error && (
-          <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <p className="mt-4 rounded-xl border border-zomi-red/20 bg-zomi-red/5 px-4 py-3 text-sm text-zomi-red-dark">
             {error}
           </p>
         )}
 
-        <section className="mt-8">
-          <h2 className="mb-3 text-lg font-semibold text-slate-800">
+        <section className="mt-6">
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-zomi-muted">
             Try an example
           </h2>
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="flex gap-2 overflow-x-auto pb-1">
             {EXAMPLES.map((example, index) => (
               <button
                 key={index}
                 type="button"
                 onClick={() => handleExample(example)}
                 disabled={isTranslating || !modelReady}
-                className="rounded-xl border border-slate-200 bg-white p-4 text-left text-sm text-slate-700 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="min-w-[220px] max-w-xs shrink-0 rounded-xl border border-stone-300/50 bg-zomi-paper/60 p-3 text-left text-sm text-zomi-ink transition hover:border-zomi-red/30 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <span className="line-clamp-4">{example.text}</span>
+                <span className="line-clamp-3">{example.text}</span>
               </button>
             ))}
           </div>
         </section>
 
-        <footer className="mt-10 space-y-2 text-center text-xs text-slate-400">
+        <footer className="mt-8 border-t border-stone-300/40 pt-4 text-center text-xs text-zomi-muted">
           <p>
-            Paite is a Zomi language. This tool helps Zomi speakers, learners,
-            and diaspora communities translate between English and Paite.
+            One sentence per request · up to {maxTokens} tokens — server
+            hardware costs money, so longer text isn&apos;t supported yet.
           </p>
-          <p>
-            Powered by{" "}
+          <p className="mt-1">
+            Paite is a Zomi language — built for speakers, learners, and
+            diaspora communities.
+          </p>
+          <p className="mt-1">
+            Built by{" "}
             <a
-              href="https://huggingface.co/sensix-zo/nllb-paite-600m-v15"
+              href="https://huggingface.co/sensix-zo"
               target="_blank"
               rel="noreferrer"
-              className="text-indigo-600 hover:underline"
+              className="text-zomi-red hover:underline"
             >
-              sensix-zo/nllb-paite-600m-v15
-            </a>
+              sensix-zo
+            </a>{" "}
+            on Hugging Face
           </p>
         </footer>
       </div>

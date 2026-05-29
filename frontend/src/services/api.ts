@@ -1,10 +1,22 @@
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
-export type LangCode = "eng_Latn" | "pai_Latn";
+export type LangCode =
+  | "eng_Latn"
+  | "pai_Latn"
+  | "lus_Latn"
+  | "mni_Beng"
+  | "mya_Mymr"
+  | "hin_Deva";
 
 export interface Language {
   code: LangCode;
   label: string;
+  provider: "hf" | "google";
+}
+
+export interface TranslationLimits {
+  max_tokens: number;
+  single_sentence_only: boolean;
 }
 
 export interface ModelStatus {
@@ -14,6 +26,8 @@ export interface ModelStatus {
   model_repo: string;
   languages: Language[];
   error: string | null;
+  limits?: TranslationLimits;
+  google_translate_enabled?: boolean;
 }
 
 export interface TranslateResult {

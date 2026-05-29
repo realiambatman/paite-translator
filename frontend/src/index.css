@@ -1,11 +1,38 @@
 @import "tailwindcss";
 
+@theme {
+  --color-zomi-cream: #fdfbf7;
+  --color-zomi-paper: #f3efe6;
+  --color-zomi-paper-dark: #ebe6dc;
+  --color-zomi-red: #be0000;
+  --color-zomi-red-dark: #8b0000;
+  --color-zomi-gold: #b8860b;
+  --color-zomi-ink: #1c1917;
+  --color-zomi-muted: #78716c;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
-  background: #f8fafc;
-  color: #0f172a;
+  background: var(--color-zomi-cream);
+  color: var(--color-zomi-ink);
+}
+
+.zomi-pattern {
+  background-image:
+    linear-gradient(to right, rgb(28 25 23 / 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(28 25 23 / 0.04) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+.zomi-stripe {
+  background: linear-gradient(
+    90deg,
+    var(--color-zomi-red) 0%,
+    var(--color-zomi-gold) 50%,
+    var(--color-zomi-red-dark) 100%
+  );
 }
 
 @keyframes stream-cursor-blink {

@@ -38,7 +38,7 @@ app.add_middleware(
 
 
 class TranslateRequest(BaseModel):
-    text: str = Field(default="", max_length=50000)
+    text: str = Field(default="", max_length=500)
     src_lang: str = "eng_Latn"
     tgt_lang: str = "pai_Latn"
 
@@ -69,6 +69,8 @@ def translate(body: TranslateRequest):
         result = engine.translate(body.text, body.src_lang, body.tgt_lang)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

@@ -6,6 +6,17 @@ from pathlib import Path
 import nltk
 import torch
 from huggingface_hub import hf_hub_download, snapshot_download
+from google_translate import is_configured as google_configured, translate as google_translate_text
+from languages import (
+    ENGLISH,
+    PAITE,
+    LANGUAGES,
+    google_code,
+    languages_for_api,
+    resolve_route,
+    uses_google,
+)
+from limits import enforce_input_limits, limits_info
 from transformers import AutoModelForSeq2SeqLM, BitsAndBytesConfig, NllbTokenizer
 
 MODEL_REPO = os.environ.get("MODEL_REPO", "sensix-zo/nllb-paite-600m-v15")
@@ -13,11 +24,6 @@ BASE_NLLB_REPO = "facebook/nllb-200-distilled-600M"
 HF_TOKEN = os.environ.get("HF_TOKEN")
 CPU_BATCH_SIZE = int(os.environ.get("CPU_BATCH_SIZE", "1"))
 GPU_BATCH_SIZE = int(os.environ.get("GPU_BATCH_SIZE", "8"))
-
-LANGUAGES = {
-    "eng_Latn": "English",
-    "pai_Latn": "Paite",
-}
 
 ZOMI_NUMBERS = {
     "Khat": "1",
@@ -114,8 +120,10 @@ class TranslationEngine:
             "device": self.device,
             "quantization": self.quantization,
             "model_repo": MODEL_REPO,
-            "languages": [{"code": code, "label": label} for code, label in LANGUAGES.items()],
+            "languages": languages_for_api(),
+            "google_translate_enabled": google_configured(),
             "error": self.error,
+            "limits": limits_info(),
         }
 
     def _num_beams(self) -> int:
@@ -212,37 +220,30 @@ class TranslationEngine:
             return
         if src_lang == tgt_lang:
             return
+        if uses_google(src_lang, tgt_lang) and not google_configured():
+            raise RuntimeError(
+                "This language pair uses Google Translate, but GOOGLE_TRANSLATE_API_KEY is not set."
+            )
+        enforce_input_limits(text)
 
-    def translate(self, text: str, src_lang: str, tgt_lang: str) -> str:
-        self._validate_request(text, src_lang, tgt_lang)
+    def _translate_google(self, text: str, src_lang: str, tgt_lang: str) -> str:
+        src_code = google_code(src_lang)
+        tgt_code = google_code(tgt_lang)
+        if not src_code or not tgt_code:
+            raise ValueError(f"Google Translate does not support: {src_lang} -> {tgt_lang}")
+        return google_translate_text(text, src_code, tgt_code)
 
-        if not text or not text.strip():
-            return ""
-        if src_lang == tgt_lang:
-            return text
-
+    def _translate_hf(self, text: str, src_lang: str, tgt_lang: str) -> str:
         all_sentences, para_structures = self._split_document(text)
         translated_sentences = (
             self._translate_batch(all_sentences, src_lang, tgt_lang) if all_sentences else []
         )
         result = self._reconstruct(para_structures, translated_sentences)
-
-        if tgt_lang == "pai_Latn":
+        if tgt_lang == PAITE:
             result = fix_bullet_points(result)
-
         return result
 
-    def translate_stream(self, text: str, src_lang: str, tgt_lang: str):
-        """Yield partial translations with progress for streaming UI."""
-        self._validate_request(text, src_lang, tgt_lang)
-
-        if not text or not text.strip():
-            yield {"translation": "", "current": 0, "total": 0}
-            return
-        if src_lang == tgt_lang:
-            yield {"translation": text, "current": 1, "total": 1}
-            return
-
+    def _translate_stream_hf(self, text: str, src_lang: str, tgt_lang: str):
         all_sentences, para_structures = self._split_document(text)
         total = len(all_sentences)
         if not all_sentences:
@@ -258,10 +259,63 @@ class TranslationEngine:
                 self._translate_batch(batch, src_lang, tgt_lang, batch_size)
             )
             partial = self._reconstruct(para_structures, translated_sentences)
-            if tgt_lang == "pai_Latn":
+            if tgt_lang == PAITE:
                 partial = fix_bullet_points(partial)
             yield {
                 "translation": partial,
                 "current": len(translated_sentences),
                 "total": total,
             }
+
+    def translate(self, text: str, src_lang: str, tgt_lang: str) -> str:
+        self._validate_request(text, src_lang, tgt_lang)
+
+        if not text or not text.strip():
+            return ""
+        if src_lang == tgt_lang:
+            return text
+
+        route = resolve_route(src_lang, tgt_lang)
+        if route == "hf":
+            return self._translate_hf(text, src_lang, tgt_lang)
+        if route == "google":
+            return self._translate_google(text, src_lang, tgt_lang)
+        if route == "to_paite":
+            english = self._translate_google(text, src_lang, ENGLISH)
+            return self._translate_hf(english, ENGLISH, PAITE)
+        if route == "from_paite":
+            english = self._translate_hf(text, PAITE, ENGLISH)
+            return self._translate_google(english, ENGLISH, tgt_lang)
+
+        raise ValueError(f"Unsupported language pair: {src_lang} -> {tgt_lang}")
+
+    def translate_stream(self, text: str, src_lang: str, tgt_lang: str):
+        """Yield partial translations with progress for streaming UI."""
+        self._validate_request(text, src_lang, tgt_lang)
+
+        if not text or not text.strip():
+            yield {"translation": "", "current": 0, "total": 0}
+            return
+        if src_lang == tgt_lang:
+            yield {"translation": text, "current": 1, "total": 1}
+            return
+
+        route = resolve_route(src_lang, tgt_lang)
+        if route == "hf":
+            yield from self._translate_stream_hf(text, src_lang, tgt_lang)
+            return
+        if route == "google":
+            result = self._translate_google(text, src_lang, tgt_lang)
+            yield {"translation": result, "current": 1, "total": 1}
+            return
+        if route == "to_paite":
+            english = self._translate_google(text, src_lang, ENGLISH)
+            yield from self._translate_stream_hf(english, ENGLISH, PAITE)
+            return
+        if route == "from_paite":
+            english = self._translate_hf(text, PAITE, ENGLISH)
+            result = self._translate_google(english, ENGLISH, tgt_lang)
+            yield {"translation": result, "current": 1, "total": 1}
+            return
+
+        raise ValueError(f"Unsupported language pair: {src_lang} -> {tgt_lang}")
