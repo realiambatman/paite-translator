@@ -118,6 +118,16 @@ export default function App() {
   }, [refreshStatus]);
 
   useEffect(() => {
+    const wakeServer = () => {
+      if (document.visibilityState === "visible") {
+        void refreshStatus();
+      }
+    };
+    document.addEventListener("visibilitychange", wakeServer);
+    return () => document.removeEventListener("visibilitychange", wakeServer);
+  }, [refreshStatus]);
+
+  useEffect(() => {
     if (isTranslating && outputRef.current) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
     }

@@ -31,12 +31,21 @@ RUN npm run build
 FROM python:3.11-slim AS runtime
 
 ARG BUILD_ID=dev
+ARG INFERENCE_BACKEND=ctranslate2
+ARG MODEL_REPO=sensix-zo/nllb-paite-600m-v15
+ARG CT2_MODEL_REPO=sensix-zo/nllb-paite-600m-v15-ct2
+ARG HF_TOKEN=
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8000 \
     STATIC_DIR=/app/static \
-    BUILD_ID=$BUILD_ID
+    BUILD_ID=$BUILD_ID \
+    INFERENCE_BACKEND=$INFERENCE_BACKEND \
+    MODEL_REPO=$MODEL_REPO \
+    CT2_MODEL_REPO=$CT2_MODEL_REPO \
+    HF_HOME=/app/.cache/huggingface \
+    HF_TOKEN=$HF_TOKEN
 
 WORKDIR /app
 
@@ -48,6 +57,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
+# Bake models into the image so cold starts only load into memory, not re-download.
+RUN python - <<'PY'
+import os
+import shutil
+
+import nltk
+from huggingface_hub import hf_hub_download, snapshot_download
+
+backend = os.environ.get("INFERENCE_BACKEND", "ctranslate2").lower()
+token = os.environ.get("HF_TOKEN") or None
+
+nltk.download("punkt", quiet=True)
+nltk.download("punkt_tab", quiet=True)
+
+if backend == "ctranslate2":
+    snapshot_download(repo_id=os.environ["CT2_MODEL_REPO"], token=token)
+else:
+    local_repo_path = snapshot_download(repo_id=os.environ["MODEL_REPO"], token=token)
+    spm_path = hf_hub_download(
+        repo_id="facebook/nllb-200-distilled-600M",
+        filename="sentencepiece.bpe.model",
+        token=token,
+    )
+    shutil.copy(spm_path, os.path.join(local_repo_path, "sentencepiece.bpe.model"))
+PY
+
 COPY backend/ ./backend/
 COPY --from=frontend-build /app/frontend/dist ./static
 
@@ -56,6 +91,6 @@ WORKDIR /app/backend
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')" || exit 1
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/ready')" || exit 1
 
 CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}"]

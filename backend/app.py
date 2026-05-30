@@ -56,6 +56,14 @@ def health():
     return {"ok": True}
 
 
+@app.get("/api/ready")
+def ready():
+    if not engine.ready:
+        detail = engine.error or "Model is still loading."
+        raise HTTPException(status_code=503, detail=detail)
+    return {"ready": True, "device": engine.device}
+
+
 @app.get("/api/version")
 def version():
     return {"build": BUILD_ID}

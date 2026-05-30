@@ -83,8 +83,19 @@ class TranslationEngine:
         if self.inference_backend == "ctranslate2":
             print(f"Loading CTranslate2 model from {CT2_MODEL_REPO}...")
             load_ct2(self)
+        else:
+            self._load_pytorch()
+        self._warmup()
+
+    def _warmup(self):
+        """Run a tiny translation so the first user request is not cold."""
+        if not self.ready:
             return
-        self._load_pytorch()
+        try:
+            self.translate("Hello.", ENGLISH, PAITE)
+            print("Model warmup complete.")
+        except Exception as exc:
+            print(f"Model warmup skipped: {exc}")
 
     def _load_pytorch(self):
         print(f"Loading PyTorch model to {self.device}...")
