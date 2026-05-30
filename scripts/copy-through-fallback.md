@@ -48,10 +48,10 @@ word groups (default 4 words) and retries before giving up.
 
 If any check fails after all strategies, the original first-pass output is returned unchanged.
 
-## Escalation: aggressive breakdown only after failure
+## Escalation: three levels (aggressive is last)
 
-The fallback escalates in stages. Each deeper stage runs **only if the previous
-stage failed**. Normal translations never reach any fallback stage.
+The fallback has **three levels**, not four. Each level runs only if the previous
+one failed. Normal translations stop at Level 1.
 
 ### Level 1 — full sentence (always runs first)
 
@@ -61,64 +61,60 @@ stage failed**. Normal translations never reach any fallback stage.
 
 This is what happens for almost all everyday sentences.
 
-### Level 2 — clause fallback (only if Level 1 copy-throughs)
+### Level 2 — chunk fallback (only if Level 1 copy-throughs)
 
 Runs only when the **whole sentence** output is at least 80% identical to the
 English input.
 
-1. Split the sentence using delimiter-based rules (`with`, `and`, `for`, commas, etc.).
-2. Translate each clause once.
-3. Join the clause outputs.
-4. If the joined result is no longer copy-through for the full sentence, use it.
+The full sentence is retried using up to **three split styles**, in order, until
+one produces a non-copy-through joined result:
 
-If delimiter splitting cannot produce more than one chunk, or the joined result
-still copy-throughs, try fixed **8-word** chunks on the full sentence (next strategy
-in the list).
+1. **Delimiter split** — commas, ` with `, ` and `, ` for `, etc.
+2. **8-word chunks** on the full sentence (`COPY_THROUGH_MAX_CLAUSE_WORDS`)
+3. **4-word chunks** on the full sentence (`COPY_THROUGH_AGGRESSIVE_WORDS`)
 
-### Level 3 — aggressive sub-split (only if a clause still copy-throughs)
+Each style translates its chunks, joins them, and checks the full sentence. If the
+join still copy-throughs, the next split style is tried. Level 3 (below) may run
+**during** any of these attempts.
 
-Runs **per clause**, not on every clause. Inside Level 2 (or the 8-word / 4-word
-full-sentence strategies):
+### Level 3 — aggressive sub-split (only if a chunk still copy-throughs)
 
-1. Translate a clause once.
-2. If that clause output is **not** copy-through, keep it. **No sub-split for that clause.**
-3. If that clause **still** copy-throughs and has more than one word, split it into
-   smaller word groups (default **4 words** via `COPY_THROUGH_AGGRESSIVE_WORDS`).
+This is the **last** escalation step. It runs **per chunk**, not on every chunk,
+while Level 2 is in progress:
+
+1. Translate a chunk once.
+2. If that chunk output is **not** copy-through, keep it. **No sub-split.**
+3. If that chunk **still** copy-throughs and has more than one word, split it into
+   smaller word groups (default **4 words**).
 4. Translate each smaller group and join.
-5. Repeat sub-splitting up to **2 levels deep** if a sub-chunk still copy-throughs.
+5. Repeat up to **2 levels deep** if a sub-chunk still copy-throughs.
 
 Example: `Zomi Translator is an online Zomi language translation system with an
 integrated Zomi Dictionary.`
 
 - Level 1: full sentence copy-throughs.
-- Level 2: split on `with`, translate each part; medium-sized chunks containing
-  "Zomi" may still copy-through.
-- Level 3: only those failing chunks are broken into ~4-word pieces and retried.
+- Level 2: delimiter split on `with`; translate each part.
+- Level 3: only chunks that **still** copy-through (often ones with repeated
+  "Zomi") are broken into ~4-word pieces and retried.
 
-Clauses that translated successfully on the first try are never sub-split.
+Chunks that translated successfully on the first try are never sub-split.
 
-### Level 4 — next full-sentence strategy (only if Level 2 join still fails)
-
-If delimiter-based chunks are joined and the **full sentence** is still
-copy-through, try again with:
-
-1. Fixed **8-word** chunks on the entire source, then
-2. Fixed **4-word** chunks on the entire source.
-
-Each strategy uses the same per-clause resilient sub-split from Level 3 when
-individual chunks still copy-through.
+If all three Level 2 split styles fail (even with Level 3 help on bad chunks),
+the original Level 1 English copy-through output is returned.
 
 ### Summary
 
-| Stage | When it runs | Affects normal translations? |
+| Level | When it runs | Affects normal translations? |
 |-------|----------------|------------------------------|
-| Level 1 full sentence | Always (first pass) | Yes — this is normal translation |
-| Level 2 clause split | Full sentence copy-through only | No |
-| Level 3 aggressive sub-split | Individual clause still copy-through only | No |
-| Level 4 alternate chunk sizes | Joined result still copy-through only | No |
+| 1 — full sentence | Always (first pass) | Yes — this is normal translation |
+| 2 — chunk fallback | Full sentence copy-through only | No |
+| 3 — aggressive sub-split | Individual chunk still copy-through only | No |
 
-**Bottom line:** aggressive breakdown is never the default path. It only runs
-after copy-through is detected at the sentence or clause level.
+There is no Level 4. The 8-word and 4-word full-sentence splits are alternate
+**Level 2** styles, not a separate stage after aggressive sub-split.
+
+**Bottom line:** aggressive breakdown (Level 3) is the last resort. It only runs
+on chunks that already failed, never on sentences that translated normally.
 
 ## What it does not affect
 
