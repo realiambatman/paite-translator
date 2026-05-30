@@ -3,6 +3,7 @@ import re
 import shutil
 import threading
 import time
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import nltk
@@ -30,6 +31,8 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 CPU_BATCH_SIZE = int(os.environ.get("CPU_BATCH_SIZE", "1"))
 GPU_BATCH_SIZE = int(os.environ.get("GPU_BATCH_SIZE", "8"))
 KEEP_WARM_INTERVAL_SEC = int(os.environ.get("KEEP_WARM_INTERVAL_SEC", "300"))
+COPY_THROUGH_RATIO = float(os.environ.get("COPY_THROUGH_RATIO", "0.80"))
+COPY_THROUGH_RETRY_BEAMS = int(os.environ.get("COPY_THROUGH_RETRY_BEAMS", "8"))
 
 ZOMI_NUMBERS = {
     "Khat": "1",
@@ -60,6 +63,19 @@ def _detect_device() -> str:
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+def _normalize_for_compare(text: str) -> str:
+    return " ".join(text.split()).lower()
+
+
+def is_copy_through(source: str, translation: str) -> bool:
+    """True when the model returned text almost identical to the source."""
+    src = _normalize_for_compare(source)
+    out = _normalize_for_compare(translation)
+    if not src or not out:
+        return False
+    return SequenceMatcher(None, src, out).ratio() >= COPY_THROUGH_RATIO
 
 
 def fix_bullet_points(translated_text: str) -> str:
@@ -232,15 +248,28 @@ class TranslationEngine:
         src_lang: str,
         tgt_lang: str,
         batch_size: int | None = None,
+        *,
+        num_beams: int | None = None,
+        length_penalty: float = 1.0,
+        repetition_penalty: float = 1.0,
+        no_repeat_ngram_size: int = 0,
     ) -> list[str]:
         assert self.tokenizer is not None and self._model_ready()
 
         batch_size = batch_size or self._batch_size()
-        num_beams = self._num_beams()
+        beams = num_beams if num_beams is not None else self._num_beams()
 
         if self.inference_backend == "ctranslate2":
             return translate_batch_ct2(
-                self, sentences, src_lang, tgt_lang, batch_size, num_beams
+                self,
+                sentences,
+                src_lang,
+                tgt_lang,
+                batch_size,
+                beams,
+                length_penalty=length_penalty,
+                repetition_penalty=repetition_penalty,
+                no_repeat_ngram_size=no_repeat_ngram_size,
             )
 
         assert self.model is not None
@@ -266,9 +295,13 @@ class TranslationEngine:
             gen_kwargs = {
                 "forced_bos_token_id": self.tokenizer.convert_tokens_to_ids(tgt_lang),
                 "max_new_tokens": dynamic_max_tokens,
-                "num_beams": num_beams,
+                "num_beams": beams,
                 "do_sample": False,
             }
+            if length_penalty != 1.0:
+                gen_kwargs["length_penalty"] = length_penalty
+            if no_repeat_ngram_size > 0:
+                gen_kwargs["no_repeat_ngram_size"] = no_repeat_ngram_size
 
             with torch.no_grad():
                 generated = self.model.generate(**inputs, **gen_kwargs)
@@ -277,6 +310,56 @@ class TranslationEngine:
                 )
 
         return translated
+
+    def _retry_copy_through(
+        self,
+        sentences: list[str],
+        translated: list[str],
+        src_lang: str,
+        tgt_lang: str,
+        num_beams: int,
+    ) -> list[str]:
+        if tgt_lang != PAITE:
+            return translated
+
+        retry_beams = max(num_beams + 2, COPY_THROUGH_RETRY_BEAMS)
+        retried = list(translated)
+
+        for index, (source, output) in enumerate(zip(sentences, translated)):
+            if not is_copy_through(source, output):
+                continue
+            retry = self._translate_batch(
+                [source],
+                src_lang,
+                tgt_lang,
+                batch_size=1,
+                num_beams=retry_beams,
+                length_penalty=1.15,
+                repetition_penalty=1.15,
+                no_repeat_ngram_size=3,
+            )[0]
+            if not is_copy_through(source, retry):
+                retried[index] = retry
+                print(f"Copy-through retry improved sentence {index + 1}")
+
+        return retried
+
+    def _translate_sentences(
+        self,
+        sentences: list[str],
+        src_lang: str,
+        tgt_lang: str,
+        batch_size: int | None = None,
+    ) -> list[str]:
+        if not sentences:
+            return []
+        num_beams = self._num_beams()
+        translated = self._translate_batch(
+            sentences, src_lang, tgt_lang, batch_size, num_beams=num_beams
+        )
+        return self._retry_copy_through(
+            sentences, translated, src_lang, tgt_lang, num_beams
+        )
 
     def _validate_request(self, text: str, src_lang: str, tgt_lang: str) -> None:
         if not self.ready or self.tokenizer is None or not self._model_ready():
@@ -307,7 +390,9 @@ class TranslationEngine:
     def _translate_hf(self, text: str, src_lang: str, tgt_lang: str) -> str:
         all_sentences, para_structures = self._split_document(text)
         translated_sentences = (
-            self._translate_batch(all_sentences, src_lang, tgt_lang) if all_sentences else []
+            self._translate_sentences(all_sentences, src_lang, tgt_lang)
+            if all_sentences
+            else []
         )
         result = self._reconstruct(para_structures, translated_sentences)
         if tgt_lang == PAITE:
@@ -327,7 +412,7 @@ class TranslationEngine:
         for i in range(0, len(all_sentences), batch_size):
             batch = all_sentences[i : i + batch_size]
             translated_sentences.extend(
-                self._translate_batch(batch, src_lang, tgt_lang, batch_size)
+                self._translate_sentences(batch, src_lang, tgt_lang, batch_size)
             )
             partial = self._reconstruct(para_structures, translated_sentences)
             if tgt_lang == PAITE:
