@@ -48,6 +48,78 @@ word groups (default 4 words) and retries before giving up.
 
 If any check fails after all strategies, the original first-pass output is returned unchanged.
 
+## Escalation: aggressive breakdown only after failure
+
+The fallback escalates in stages. Each deeper stage runs **only if the previous
+stage failed**. Normal translations never reach any fallback stage.
+
+### Level 1 — full sentence (always runs first)
+
+1. Translate the entire sentence once with normal beam/batch settings.
+2. If the output is **not** copy-through, return it immediately.
+3. **No splitting, no sub-splitting, no extra decode passes.** Done.
+
+This is what happens for almost all everyday sentences.
+
+### Level 2 — clause fallback (only if Level 1 copy-throughs)
+
+Runs only when the **whole sentence** output is at least 80% identical to the
+English input.
+
+1. Split the sentence using delimiter-based rules (`with`, `and`, `for`, commas, etc.).
+2. Translate each clause once.
+3. Join the clause outputs.
+4. If the joined result is no longer copy-through for the full sentence, use it.
+
+If delimiter splitting cannot produce more than one chunk, or the joined result
+still copy-throughs, try fixed **8-word** chunks on the full sentence (next strategy
+in the list).
+
+### Level 3 — aggressive sub-split (only if a clause still copy-throughs)
+
+Runs **per clause**, not on every clause. Inside Level 2 (or the 8-word / 4-word
+full-sentence strategies):
+
+1. Translate a clause once.
+2. If that clause output is **not** copy-through, keep it. **No sub-split for that clause.**
+3. If that clause **still** copy-throughs and has more than one word, split it into
+   smaller word groups (default **4 words** via `COPY_THROUGH_AGGRESSIVE_WORDS`).
+4. Translate each smaller group and join.
+5. Repeat sub-splitting up to **2 levels deep** if a sub-chunk still copy-throughs.
+
+Example: `Zomi Translator is an online Zomi language translation system with an
+integrated Zomi Dictionary.`
+
+- Level 1: full sentence copy-throughs.
+- Level 2: split on `with`, translate each part; medium-sized chunks containing
+  "Zomi" may still copy-through.
+- Level 3: only those failing chunks are broken into ~4-word pieces and retried.
+
+Clauses that translated successfully on the first try are never sub-split.
+
+### Level 4 — next full-sentence strategy (only if Level 2 join still fails)
+
+If delimiter-based chunks are joined and the **full sentence** is still
+copy-through, try again with:
+
+1. Fixed **8-word** chunks on the entire source, then
+2. Fixed **4-word** chunks on the entire source.
+
+Each strategy uses the same per-clause resilient sub-split from Level 3 when
+individual chunks still copy-through.
+
+### Summary
+
+| Stage | When it runs | Affects normal translations? |
+|-------|----------------|------------------------------|
+| Level 1 full sentence | Always (first pass) | Yes — this is normal translation |
+| Level 2 clause split | Full sentence copy-through only | No |
+| Level 3 aggressive sub-split | Individual clause still copy-through only | No |
+| Level 4 alternate chunk sizes | Joined result still copy-through only | No |
+
+**Bottom line:** aggressive breakdown is never the default path. It only runs
+after copy-through is detected at the sentence or clause level.
+
 ## What it does not affect
 
 - **Normal translations** where the model already produces real Paite output.
