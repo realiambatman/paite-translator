@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from static_files import SpaStaticFiles
+from limits import MAX_TRANSLATION_TOKENS, max_chars_for_tokens
 from translation import TranslationEngine
 
 engine = TranslationEngine()
@@ -40,7 +41,7 @@ app.add_middleware(
 
 
 class TranslateRequest(BaseModel):
-    text: str = Field(default="", max_length=500)
+    text: str = Field(default="", max_length=max_chars_for_tokens(MAX_TRANSLATION_TOKENS))
     src_lang: str = "eng_Latn"
     tgt_lang: str = "pai_Latn"
 
