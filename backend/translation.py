@@ -1,6 +1,8 @@
 import os
 import re
 import shutil
+import threading
+import time
 from pathlib import Path
 
 import nltk
@@ -27,6 +29,7 @@ BASE_NLLB_REPO = "facebook/nllb-200-distilled-600M"
 HF_TOKEN = os.environ.get("HF_TOKEN")
 CPU_BATCH_SIZE = int(os.environ.get("CPU_BATCH_SIZE", "1"))
 GPU_BATCH_SIZE = int(os.environ.get("GPU_BATCH_SIZE", "8"))
+KEEP_WARM_INTERVAL_SEC = int(os.environ.get("KEEP_WARM_INTERVAL_SEC", "300"))
 
 ZOMI_NUMBERS = {
     "Khat": "1",
@@ -86,6 +89,7 @@ class TranslationEngine:
         else:
             self._load_pytorch()
         self._warmup()
+        self._start_keep_warm()
 
     def _warmup(self):
         """Run a tiny translation so the first user request is not cold."""
@@ -96,6 +100,28 @@ class TranslationEngine:
             print("Model warmup complete.")
         except Exception as exc:
             print(f"Model warmup skipped: {exc}")
+
+    def _start_keep_warm(self):
+        """Periodically run inference so model pages stay in RAM after idle."""
+        if KEEP_WARM_INTERVAL_SEC <= 0:
+            return
+
+        def loop():
+            while True:
+                time.sleep(KEEP_WARM_INTERVAL_SEC)
+                if not self.ready:
+                    continue
+                try:
+                    self.translate("Hello.", ENGLISH, PAITE)
+                    print("Keep-warm ping complete.")
+                except Exception as exc:
+                    print(f"Keep-warm skipped: {exc}")
+
+        threading.Thread(
+            target=loop,
+            daemon=True,
+            name="model-keep-warm",
+        ).start()
 
     def _load_pytorch(self):
         print(f"Loading PyTorch model to {self.device}...")

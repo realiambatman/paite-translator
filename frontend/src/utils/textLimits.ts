@@ -1,4 +1,5 @@
-export const DEFAULT_MAX_TOKENS = 100;
+export const DEFAULT_MAX_TOKENS = 200;
+export const DEFAULT_MAX_CHARS = 800;
 
 export function countWords(text: string): number {
   const trimmed = text.trim();
@@ -12,40 +13,30 @@ export function estimateTokens(text: string): number {
   return Math.max(countWords(trimmed), Math.ceil(trimmed.length / 4));
 }
 
-/** Rough client-side check; backend uses NLTK for final validation. */
-export function estimateSentenceCount(text: string): number {
+export function analyzeInput(
+  text: string,
+  maxTokens: number = DEFAULT_MAX_TOKENS,
+  maxChars: number = DEFAULT_MAX_CHARS,
+) {
   const trimmed = text.trim();
-  if (!trimmed) return 0;
-  if (trimmed.includes("\n")) return 2;
-  const parts = trimmed.split(/(?<=[.!?])\s+/).filter((part) => part.trim());
-  return parts.length || 1;
-}
-
-export function analyzeInput(text: string, maxTokens: number = DEFAULT_MAX_TOKENS) {
-  const words = countWords(text);
+  const chars = trimmed.length;
   const tokens = estimateTokens(text);
-  const sentences = estimateSentenceCount(text);
-  const overTokens = tokens > maxTokens;
-  const multiSentence = sentences > 1;
-  const tokenRatio = maxTokens > 0 ? Math.min(tokens / maxTokens, 1) : 0;
+  const overLimit = tokens > maxTokens;
+  const charRatio = maxChars > 0 ? Math.min(chars / maxChars, 1) : 0;
 
-  let message = "One sentence · max " + maxTokens + " tokens";
-  if (!text.trim()) {
-    message = "Enter one sentence to translate";
-  } else if (multiSentence) {
-    message = "Only one sentence allowed";
-  } else if (overTokens) {
-    message = "Too long — shorten your sentence";
+  let message = `Up to ${maxChars.toLocaleString()} characters`;
+  if (!trimmed) {
+    message = "Enter text to translate";
+  } else if (overLimit) {
+    message = "Too long — shorten your text";
   }
 
   return {
-    words,
+    chars,
     tokens,
-    sentences,
-    overTokens,
-    multiSentence,
-    tokenRatio,
-    valid: Boolean(text.trim()) && !overTokens && !multiSentence,
+    overLimit,
+    charRatio,
+    valid: Boolean(trimmed) && !overLimit,
     message,
   };
 }

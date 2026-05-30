@@ -6,7 +6,7 @@ import {
   type ModelStatus,
   translateTextStream,
 } from "./services/api";
-import { analyzeInput, DEFAULT_MAX_TOKENS } from "./utils/textLimits";
+import { analyzeInput, DEFAULT_MAX_CHARS, DEFAULT_MAX_TOKENS } from "./utils/textLimits";
 import { saveTranslationLog } from "./services/translationLog";
 import { fetchGoogleQuota, incrementGoogleQuota } from "./services/googleQuota";
 import { FALLBACK_LANGUAGES } from "./languages";
@@ -57,6 +57,7 @@ export default function App() {
 
   const languages = status?.languages ?? FALLBACK_LANGUAGES;
   const maxTokens = status?.limits?.max_tokens ?? DEFAULT_MAX_TOKENS;
+  const maxChars = status?.limits?.max_chars ?? DEFAULT_MAX_CHARS;
   const googleDailyLimit = status?.google_quota?.daily_char_limit ?? null;
   const googleCharsUsed = Math.max(
     firestoreCharsUsed ?? 0,
@@ -85,8 +86,8 @@ export default function App() {
   );
 
   const inputAnalysis = useMemo(
-    () => analyzeInput(inputText, maxTokens),
-    [inputText, maxTokens],
+    () => analyzeInput(inputText, maxTokens, maxChars),
+    [inputText, maxTokens, maxChars],
   );
 
   const refreshQuota = useCallback(async () => {
@@ -211,12 +212,11 @@ export default function App() {
     !isTranslating &&
     modelReady &&
     (!googleRequired || googleEnabled);
-  const barColor =
-    inputAnalysis.overTokens || inputAnalysis.multiSentence
-      ? "bg-zomi-red"
-      : inputAnalysis.tokenRatio >= 0.85
-        ? "bg-zomi-gold"
-        : "bg-zomi-red/70";
+  const barColor = inputAnalysis.overLimit
+    ? "bg-zomi-red"
+    : inputAnalysis.charRatio >= 0.85
+      ? "bg-zomi-gold"
+      : "bg-zomi-red/70";
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-zomi-cream text-zomi-ink">
@@ -228,7 +228,7 @@ export default function App() {
       </div>
 
       <div className="relative mx-auto max-w-7xl px-4 py-5 md:px-8 md:py-8">
-        <header className="mb-5 flex flex-col gap-3 border-b border-stone-300/40 pb-4 sm:flex-row sm:items-end sm:justify-between">
+        <header className="mb-5 border-b border-stone-300/40 pb-4">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zomi-gold">
               Paite · Zomi Language
@@ -241,13 +241,6 @@ export default function App() {
               more regional and world languages.
             </p>
           </div>
-          <p className="text-xs text-zomi-muted sm:text-right">
-            {modelReady ? (
-              <>Model ready · {status?.device}</>
-            ) : (
-              "Loading model from Hugging Face…"
-            )}
-          </p>
         </header>
 
         <div className="overflow-hidden rounded-2xl border border-stone-300/50 bg-zomi-paper/80 shadow-[0_8px_30px_rgb(28_25_23/0.06)] backdrop-blur-sm">
@@ -321,7 +314,7 @@ export default function App() {
               <textarea
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                placeholder="Enter one sentence to translate…"
+                placeholder="Enter text to translate…"
                 disabled={isTranslating}
                 className="min-h-[280px] flex-1 resize-none border-0 bg-transparent px-4 pb-2 text-base leading-relaxed text-zomi-ink outline-none placeholder:text-stone-400 disabled:opacity-70 md:min-h-[360px]"
               />
@@ -329,7 +322,7 @@ export default function App() {
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
                   <span
                     className={
-                      inputAnalysis.overTokens || inputAnalysis.multiSentence
+                      inputAnalysis.overLimit
                         ? "font-medium text-zomi-red-dark"
                         : "text-zomi-muted"
                     }
@@ -337,23 +330,22 @@ export default function App() {
                     {inputAnalysis.message}
                   </span>
                   <span className="tabular-nums text-zomi-muted">
-                    {inputAnalysis.words}{" "}
-                    {inputAnalysis.words === 1 ? "word" : "words"} · ~
-                    {inputAnalysis.tokens}/{maxTokens} tokens
+                    {inputAnalysis.chars.toLocaleString()}/
+                    {maxChars.toLocaleString()} characters
                   </span>
                 </div>
                 <div
                   className="h-1.5 overflow-hidden rounded-full bg-stone-200/80"
                   role="progressbar"
-                  aria-valuenow={Math.round(inputAnalysis.tokenRatio * 100)}
+                  aria-valuenow={Math.round(inputAnalysis.charRatio * 100)}
                   aria-valuemin={0}
                   aria-valuemax={100}
-                  aria-label="Estimated token usage"
+                  aria-label="Character usage"
                 >
                   <div
                     className={`h-full rounded-full transition-all duration-200 ${barColor}`}
                     style={{
-                      width: `${Math.min(inputAnalysis.tokenRatio * 100, 100)}%`,
+                      width: `${Math.min(inputAnalysis.charRatio * 100, 100)}%`,
                     }}
                   />
                 </div>
@@ -430,7 +422,7 @@ export default function App() {
 
         <footer className="mt-8 border-t border-stone-300/40 pt-4 text-center text-xs text-zomi-muted">
           <p>
-            One sentence per request · up to {maxTokens} tokens — server
+            Up to {maxChars.toLocaleString()} characters per request — server
             hardware costs money, so longer text isn&apos;t supported yet.
           </p>
           <p className="mt-1">

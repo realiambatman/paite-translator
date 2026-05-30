@@ -11,6 +11,7 @@ export interface Language {
 
 export interface TranslationLimits {
   max_tokens: number;
+  max_chars: number;
   single_sentence_only: boolean;
 }
 

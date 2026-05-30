@@ -1,18 +1,11 @@
 import os
 import re
 
-import nltk
-
-MAX_TRANSLATION_TOKENS = int(os.environ.get("MAX_TRANSLATION_TOKENS", "100"))
+MAX_TRANSLATION_TOKENS = int(os.environ.get("MAX_TRANSLATION_TOKENS", "200"))
 
 
-def _ensure_nltk():
-    try:
-        nltk.data.find("tokenizers/punkt")
-        nltk.data.find("tokenizers/punkt_tab")
-    except LookupError:
-        nltk.download("punkt", quiet=True)
-        nltk.download("punkt_tab", quiet=True)
+def max_chars_for_tokens(tokens: int) -> int:
+    return tokens * 4
 
 
 def count_words(text: str) -> int:
@@ -31,28 +24,18 @@ def enforce_input_limits(text: str) -> None:
     if not stripped:
         return
 
-    if "\n" in stripped:
-        raise ValueError(
-            "Only one sentence is allowed. Remove line breaks and try again."
-        )
-
-    _ensure_nltk()
-    sentences = nltk.sent_tokenize(stripped)
-    if len(sentences) > 1:
-        raise ValueError(
-            "Only one sentence at a time is supported to reduce server load."
-        )
-
     tokens = estimate_tokens(stripped)
     if tokens > MAX_TRANSLATION_TOKENS:
+        max_chars = max_chars_for_tokens(MAX_TRANSLATION_TOKENS)
         raise ValueError(
-            f"Text is about {tokens} tokens (maximum {MAX_TRANSLATION_TOKENS}). "
-            "Please shorten your sentence."
+            f"Text is too long (maximum about {max_chars} characters). "
+            "Please shorten your text."
         )
 
 
 def limits_info() -> dict:
     return {
         "max_tokens": MAX_TRANSLATION_TOKENS,
-        "single_sentence_only": True,
+        "max_chars": max_chars_for_tokens(MAX_TRANSLATION_TOKENS),
+        "single_sentence_only": False,
     }
