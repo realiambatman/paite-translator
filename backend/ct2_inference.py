@@ -65,10 +65,6 @@ def translate_batch_ct2(
     tgt_lang: str,
     batch_size: int,
     num_beams: int,
-    *,
-    length_penalty: float = 1.0,
-    repetition_penalty: float = 1.0,
-    no_repeat_ngram_size: int = 0,
 ) -> list[str]:
     assert engine.tokenizer is not None and engine.ct2_translator is not None
 
@@ -87,21 +83,11 @@ def translate_batch_ct2(
             sources.append(engine.tokenizer.convert_ids_to_tokens(token_ids))
 
         max_decoding_length = int(50 + 2.5 * max_input_len)
-        decode_kwargs: dict = {
-            "beam_size": num_beams,
-            "max_decoding_length": max_decoding_length,
-        }
-        if length_penalty != 1.0:
-            decode_kwargs["length_penalty"] = length_penalty
-        if repetition_penalty != 1.0:
-            decode_kwargs["repetition_penalty"] = repetition_penalty
-        if no_repeat_ngram_size > 0:
-            decode_kwargs["no_repeat_ngram_size"] = no_repeat_ngram_size
-
         results = engine.ct2_translator.translate_batch(
             sources,
             target_prefix=[target_prefix] * len(sources),
-            **decode_kwargs,
+            beam_size=num_beams,
+            max_decoding_length=max_decoding_length,
         )
 
         for result in results:
