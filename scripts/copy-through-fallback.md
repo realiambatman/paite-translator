@@ -166,16 +166,31 @@ English to Paite because Google output is usually cleaner.
 | File | Role |
 |------|------|
 | `backend/copy_through_fallback.py` | Detection, splitting, retry logic (delete this file to remove the feature) |
-| `backend/translation.py` | Calls `try_chunk_fallback` from `_translate_one_sentence` |
+| `backend/translation.py` | Calls `try_chunk_fallback` from `_translate_one_unit` |
 | `.env.example` | Documents environment variables |
 
 Integration points in `translation.py`:
 
-- `_translate_one_sentence()` — runs first pass, then optional fallback.
-- `_translate_sentences()` — routes Paite-target HF work through
-  `_translate_one_sentence` when fallback is enabled (one sentence at a time).
-- `_translate_hf()` and `_translate_stream_hf()` — use `_translate_sentences` /
-  `_translate_one_sentence`.
+- `_translate_one_unit()` — runs first pass on a translation unit (1–N sentences), then optional fallback.
+- `_translate_units()` — routes Paite-target HF work through `_translate_one_unit` when fallback is enabled.
+- `_group_document_sentences()` — joins consecutive sentences (default: pairs via `SENTENCE_GROUP_SIZE=2`) before decode.
+- `_translate_hf()` and `_translate_stream_hf()` — group, translate units, reconstruct.
+
+### Sentence grouping and fallback
+
+By default, the HF path sends **two consecutive sentences** to the model as one unit
+(`SENTENCE_GROUP_SIZE=2`). This gives the decoder cross-sentence context (for example
+linking clauses without every line ending in statement-style `hi`).
+
+Fallback still works on each **unit**, not each individual sentence:
+
+- Copy-through is checked against the **joined source text** of the unit (e.g. two sentences).
+- Chunk splitting runs on that same joined text if copy-through is detected.
+- A trailing single sentence (odd count in a paragraph) is still one unit — same as before.
+
+Trade-off: if one sentence in a pair copy-throughs but the pair as a whole does not,
+fallback will not run for that pair. In practice, pairing usually improves quality;
+set `SENTENCE_GROUP_SIZE=1` to revert to per-sentence units and per-sentence fallback.
 
 ## Environment variables
 
@@ -185,13 +200,14 @@ Integration points in `translation.py`:
 | `COPY_THROUGH_RATIO` | `0.80` | Similarity threshold (0–1). Higher = stricter copy-through detection |
 | `COPY_THROUGH_MAX_CLAUSE_WORDS` | `8` | Word-chunk size when the sentence has no comma/conjunction split points |
 | `COPY_THROUGH_AGGRESSIVE_WORDS` | `4` | Smaller word chunks for sub-splitting clauses that still copy-through |
+| `SENTENCE_GROUP_SIZE` | `2` | Sentences joined per HF decode unit; set `1` for old per-sentence behavior |
 
 ## Trade-offs
 
 - **Context:** Clause splitting loses cross-clause context within one sentence.
   Output may read slightly stitched compared to a perfect full-sentence translation.
-- **Speed:** When enabled, English-to-Paite HF translations run one sentence at a
-  time instead of batching, and copy-through cases run multiple decode passes.
+- **Speed:** When fallback is enabled, English-to-Paite HF translations run one unit
+  at a time instead of batching, and copy-through cases run multiple decode passes.
 - **Quality ceiling:** If the model cannot translate a clause at all, the fallback
   gives up and returns the original copy-through output.
 
@@ -223,11 +239,11 @@ backend/copy_through_fallback.py
 Remove:
 
 - `from copy_through_fallback import ...`
-- `_translate_one_sentence()` method
-- Copy-through branches inside `_translate_sentences()`; restore direct
-  `_translate_batch()` for all HF sentences
+- `_translate_one_unit()` method
+- Copy-through branches inside `_translate_units()`; restore direct
+  `_translate_batch()` for all HF units
 - In `_translate_stream_hf()`, restore batched `_translate_batch()` loop instead
-  of per-sentence `_translate_one_sentence()`
+  of per-unit `_translate_one_unit()`
 
 After removal, `_translate_hf` should call `_translate_batch(all_sentences, ...)`
 directly again, as it did before this workaround.

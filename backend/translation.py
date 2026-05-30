@@ -31,6 +31,7 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 CPU_BATCH_SIZE = int(os.environ.get("CPU_BATCH_SIZE", "1"))
 GPU_BATCH_SIZE = int(os.environ.get("GPU_BATCH_SIZE", "8"))
 KEEP_WARM_INTERVAL_SEC = int(os.environ.get("KEEP_WARM_INTERVAL_SEC", "300"))
+SENTENCE_GROUP_SIZE = max(1, int(os.environ.get("SENTENCE_GROUP_SIZE", "2")))
 
 ZOMI_NUMBERS = {
     "Khat": "1",
@@ -209,19 +210,40 @@ class TranslationEngine:
         return all_sentences, para_structures
 
     @staticmethod
-    def _reconstruct(
+    def _group_document_sentences(
+        all_sentences: list[str],
         para_structures: list[int],
-        translated_sentences: list[str],
+        group_size: int,
+    ) -> list[tuple[str, int]]:
+        """Join consecutive sentences into translation units (text, source sentence count)."""
+        groups: list[tuple[str, int]] = []
+        sent_idx = 0
+        for count in para_structures:
+            if count == 0:
+                continue
+            para_sents = all_sentences[sent_idx : sent_idx + count]
+            for i in range(0, len(para_sents), group_size):
+                chunk = para_sents[i : i + group_size]
+                groups.append((" ".join(chunk), len(chunk)))
+            sent_idx += count
+        return groups
+
+    @staticmethod
+    def _reconstruct_from_groups(
+        para_structures: list[int],
+        translated_groups: list[str],
+        group_size: int,
     ) -> str:
         final_output: list[str] = []
-        sent_idx = 0
+        group_idx = 0
         for count in para_structures:
             if count == 0:
                 final_output.append("")
             else:
-                para_sents = translated_sentences[sent_idx : sent_idx + count]
-                final_output.append(" ".join(para_sents))
-                sent_idx += count
+                num_groups = (count + group_size - 1) // group_size
+                para_groups = translated_groups[group_idx : group_idx + num_groups]
+                final_output.append(" ".join(para_groups))
+                group_idx += num_groups
         return "\n".join(final_output)
 
     def _model_ready(self) -> bool:
@@ -279,40 +301,39 @@ class TranslationEngine:
 
         return translated
 
-    def _translate_one_sentence(
+    def _translate_one_unit(
         self,
-        sentence: str,
+        unit: str,
         src_lang: str,
         tgt_lang: str,
     ) -> str:
-        output = self._translate_batch([sentence], src_lang, tgt_lang)[0]
+        output = self._translate_batch([unit], src_lang, tgt_lang)[0]
         if not COPY_THROUGH_FALLBACK_ENABLED or tgt_lang != PAITE:
             return output
 
         fallback = try_chunk_fallback(
-            sentence,
+            unit,
             output,
             lambda clause: self._translate_batch([clause], src_lang, tgt_lang)[0],
         )
         return fallback if fallback else output
 
-    def _translate_sentences(
+    def _translate_units(
         self,
-        sentences: list[str],
+        units: list[str],
         src_lang: str,
         tgt_lang: str,
     ) -> list[str]:
-        if not sentences:
+        if not units:
             return []
 
         batch_size = self._batch_size()
         if COPY_THROUGH_FALLBACK_ENABLED and tgt_lang == PAITE:
             return [
-                self._translate_one_sentence(sentence, src_lang, tgt_lang)
-                for sentence in sentences
+                self._translate_one_unit(unit, src_lang, tgt_lang) for unit in units
             ]
 
-        return self._translate_batch(sentences, src_lang, tgt_lang, batch_size)
+        return self._translate_batch(units, src_lang, tgt_lang, batch_size)
 
     def _validate_request(self, text: str, src_lang: str, tgt_lang: str) -> None:
         if not self.ready or self.tokenizer is None or not self._model_ready():
@@ -342,12 +363,17 @@ class TranslationEngine:
 
     def _translate_hf(self, text: str, src_lang: str, tgt_lang: str) -> str:
         all_sentences, para_structures = self._split_document(text)
-        translated_sentences = (
-            self._translate_sentences(all_sentences, src_lang, tgt_lang)
-            if all_sentences
-            else []
+        if not all_sentences:
+            return ""
+
+        groups = self._group_document_sentences(
+            all_sentences, para_structures, SENTENCE_GROUP_SIZE
         )
-        result = self._reconstruct(para_structures, translated_sentences)
+        unit_texts = [text for text, _ in groups]
+        translated_groups = self._translate_units(unit_texts, src_lang, tgt_lang)
+        result = self._reconstruct_from_groups(
+            para_structures, translated_groups, SENTENCE_GROUP_SIZE
+        )
         if tgt_lang == PAITE:
             result = fix_bullet_points(result)
         return result
@@ -359,18 +385,25 @@ class TranslationEngine:
             yield {"translation": "", "current": 0, "total": 0}
             return
 
-        translated_sentences: list[str] = []
+        groups = self._group_document_sentences(
+            all_sentences, para_structures, SENTENCE_GROUP_SIZE
+        )
+        translated_groups: list[str] = []
+        sentences_done = 0
 
-        for sentence in all_sentences:
-            translated_sentences.append(
-                self._translate_one_sentence(sentence, src_lang, tgt_lang)
+        for unit_text, sentence_count in groups:
+            translated_groups.append(
+                self._translate_one_unit(unit_text, src_lang, tgt_lang)
             )
-            partial = self._reconstruct(para_structures, translated_sentences)
+            sentences_done += sentence_count
+            partial = self._reconstruct_from_groups(
+                para_structures, translated_groups, SENTENCE_GROUP_SIZE
+            )
             if tgt_lang == PAITE:
                 partial = fix_bullet_points(partial)
             yield {
                 "translation": partial,
-                "current": len(translated_sentences),
+                "current": sentences_done,
                 "total": total,
             }
 
