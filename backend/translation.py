@@ -21,6 +21,7 @@ from languages import (
 )
 from limits import enforce_input_limits, limits_info
 from ct2_inference import CT2_MODEL_REPO, load_ct2, translate_batch_ct2
+from copy_through_fallback import ENABLED as COPY_THROUGH_FALLBACK_ENABLED, try_chunk_fallback
 from transformers import AutoModelForSeq2SeqLM, BitsAndBytesConfig, NllbTokenizer
 
 MODEL_REPO = os.environ.get("MODEL_REPO", "sensix-zo/nllb-paite-600m-v15")
@@ -278,6 +279,41 @@ class TranslationEngine:
 
         return translated
 
+    def _translate_one_sentence(
+        self,
+        sentence: str,
+        src_lang: str,
+        tgt_lang: str,
+    ) -> str:
+        output = self._translate_batch([sentence], src_lang, tgt_lang)[0]
+        if not COPY_THROUGH_FALLBACK_ENABLED or tgt_lang != PAITE:
+            return output
+
+        fallback = try_chunk_fallback(
+            sentence,
+            output,
+            lambda clause: self._translate_batch([clause], src_lang, tgt_lang)[0],
+        )
+        return fallback if fallback else output
+
+    def _translate_sentences(
+        self,
+        sentences: list[str],
+        src_lang: str,
+        tgt_lang: str,
+    ) -> list[str]:
+        if not sentences:
+            return []
+
+        batch_size = self._batch_size()
+        if COPY_THROUGH_FALLBACK_ENABLED and tgt_lang == PAITE:
+            return [
+                self._translate_one_sentence(sentence, src_lang, tgt_lang)
+                for sentence in sentences
+            ]
+
+        return self._translate_batch(sentences, src_lang, tgt_lang, batch_size)
+
     def _validate_request(self, text: str, src_lang: str, tgt_lang: str) -> None:
         if not self.ready or self.tokenizer is None or not self._model_ready():
             raise RuntimeError("Model is not loaded yet")
@@ -307,7 +343,9 @@ class TranslationEngine:
     def _translate_hf(self, text: str, src_lang: str, tgt_lang: str) -> str:
         all_sentences, para_structures = self._split_document(text)
         translated_sentences = (
-            self._translate_batch(all_sentences, src_lang, tgt_lang) if all_sentences else []
+            self._translate_sentences(all_sentences, src_lang, tgt_lang)
+            if all_sentences
+            else []
         )
         result = self._reconstruct(para_structures, translated_sentences)
         if tgt_lang == PAITE:
@@ -322,12 +360,10 @@ class TranslationEngine:
             return
 
         translated_sentences: list[str] = []
-        batch_size = self._batch_size()
 
-        for i in range(0, len(all_sentences), batch_size):
-            batch = all_sentences[i : i + batch_size]
-            translated_sentences.extend(
-                self._translate_batch(batch, src_lang, tgt_lang, batch_size)
+        for sentence in all_sentences:
+            translated_sentences.append(
+                self._translate_one_sentence(sentence, src_lang, tgt_lang)
             )
             partial = self._reconstruct(para_structures, translated_sentences)
             if tgt_lang == PAITE:
