@@ -45,8 +45,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MODEL_REPO=$MODEL_REPO \
     CT2_MODEL_REPO=$CT2_MODEL_REPO \
     HF_HOME=/app/.cache/huggingface \
-    HF_HUB_OFFLINE=1 \
-    CT2_INTER_THREADS=2 \
     HF_TOKEN=$HF_TOKEN
 
 WORKDIR /app
@@ -63,6 +61,10 @@ RUN pip install --no-cache-dir -r backend/requirements.txt
 # Use a script file — Coolify injects ARG lines into heredocs and breaks inline Python.
 COPY backend/download_models.py ./backend/download_models.py
 RUN python backend/download_models.py
+
+# Runtime only — model is baked above; block HF network lookups on container start.
+ENV HF_HUB_OFFLINE=1 \
+    CT2_INTER_THREADS=2
 
 COPY backend/ ./backend/
 COPY --from=frontend-build /app/frontend/dist ./static
