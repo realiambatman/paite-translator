@@ -31,7 +31,7 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 CPU_BATCH_SIZE = int(os.environ.get("CPU_BATCH_SIZE", "1"))
 GPU_BATCH_SIZE = int(os.environ.get("GPU_BATCH_SIZE", "8"))
 KEEP_WARM_INTERVAL_SEC = int(os.environ.get("KEEP_WARM_INTERVAL_SEC", "300"))
-SENTENCE_GROUP_SIZE = max(1, int(os.environ.get("SENTENCE_GROUP_SIZE", "2")))
+SENTENCE_GROUP_SIZE = max(1, int(os.environ.get("SENTENCE_GROUP_SIZE", "1")))
 
 ZOMI_NUMBERS = {
     "Khat": "1",
