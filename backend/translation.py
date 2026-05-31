@@ -84,14 +84,21 @@ class TranslationEngine:
         self.error: str | None = None
 
     def load(self):
+        print("TranslationEngine.load() starting...", flush=True)
         _ensure_nltk()
         if self.inference_backend == "ctranslate2":
-            print(f"Loading CTranslate2 model from {CT2_MODEL_REPO}...")
+            print(f"Loading CTranslate2 model from {CT2_MODEL_REPO}...", flush=True)
             load_ct2(self)
         else:
             self._load_pytorch()
-        self._warmup()
+        print("Model load finished; starting background tasks.", flush=True)
         self._start_keep_warm()
+        if os.environ.get("WARMUP_ON_START", "1").strip().lower() not in ("0", "false", "off", "no"):
+            threading.Thread(
+                target=self._warmup,
+                daemon=True,
+                name="model-warmup",
+            ).start()
 
     def _warmup(self):
         """Run a tiny translation so the first user request is not cold."""

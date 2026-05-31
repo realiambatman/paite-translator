@@ -21,11 +21,14 @@ STATIC_DIR = os.environ.get("STATIC_DIR")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    print("Starting model load (uvicorn will accept requests after this)...", flush=True)
     try:
         engine.load()
     except Exception as exc:
         engine.error = str(exc)
-        print(f"Failed to load model: {exc}")
+        print(f"Failed to load model: {exc}", flush=True)
+    else:
+        print("API ready to serve.", flush=True)
     yield
 
 

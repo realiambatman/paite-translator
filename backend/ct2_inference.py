@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import ctranslate2
@@ -19,6 +20,7 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 CT2_COMPUTE_TYPE = os.environ.get("CT2_COMPUTE_TYPE", "int8")
 CT2_INTER_THREADS = int(os.environ.get("CT2_INTER_THREADS", "4"))
 CT2_INTRA_THREADS = int(os.environ.get("CT2_INTRA_THREADS", "1"))
+MODEL_PATH_FILE = Path(os.environ.get("MODEL_PATH_FILE", "/app/.model_path"))
 
 
 def ct2_device() -> str:
@@ -34,8 +36,32 @@ def ct2_device() -> str:
     return "cpu"
 
 
+def _resolve_model_path() -> str:
+    explicit = os.environ.get("CT2_MODEL_PATH", "").strip()
+    if explicit and os.path.isdir(explicit):
+        print(f"Using CT2_MODEL_PATH: {explicit}")
+        return explicit
+
+    if MODEL_PATH_FILE.is_file():
+        baked = MODEL_PATH_FILE.read_text(encoding="utf-8").strip()
+        if baked and os.path.isdir(baked):
+            print(f"Using baked model path: {baked}")
+            return baked
+
+    offline = os.environ.get("HF_HUB_OFFLINE", "").strip().lower() in ("1", "true", "yes")
+    print(
+        f"Resolving model via Hugging Face cache (offline={offline}, repo={CT2_MODEL_REPO})..."
+    )
+    return snapshot_download(
+        repo_id=CT2_MODEL_REPO,
+        token=HF_TOKEN,
+        local_files_only=offline,
+    )
+
+
 def load_ct2(engine: TranslationEngine) -> None:
-    model_path = snapshot_download(repo_id=CT2_MODEL_REPO, token=HF_TOKEN)
+    print("Loading CTranslate2 weights into memory...")
+    model_path = _resolve_model_path()
     device = ct2_device()
     compute_type = CT2_COMPUTE_TYPE
     if device == "cpu" and compute_type == "default":
