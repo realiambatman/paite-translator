@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
+  extractFile,
   fetchStatus,
   FILE_ACCEPT,
   type LangCode,
   type Language,
+  type LanguageCheck,
   type ModelStatus,
-  translateFileStream,
   translateTextStream,
 } from "./services/api";
 import {
@@ -17,6 +18,7 @@ import { saveTranslationLog } from "./services/translationLog";
 import { fetchGoogleQuota, incrementGoogleQuota } from "./services/googleQuota";
 import { FALLBACK_LANGUAGES } from "./languages";
 import { LanguageSelect } from "./components/LanguageSelect";
+import { CameraCapture } from "./components/CameraCapture";
 
 const HF_LANGS = new Set<LangCode>(["eng_Latn", "pai_Latn"]);
 
@@ -55,6 +57,11 @@ export default function App() {
   const [tgtLang, setTgtLang] = useState<LangCode>("pai_Latn");
   const [isTranslating, setIsTranslating] = useState(false);
   const [fileStatus, setFileStatus] = useState<string | null>(null);
+  const [languageWarning, setLanguageWarning] = useState<LanguageCheck | null>(
+    null,
+  );
+  const [pendingFileText, setPendingFileText] = useState<string | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [firestoreCharsUsed, setFirestoreCharsUsed] = useState<number | null>(
     null,
@@ -214,7 +221,10 @@ export default function App() {
     runTranslation(example.text, example.src, example.tgt);
   };
 
-  const handleFileUpload = async (file: File) => {
+  const handleFileUpload = async (
+    file: File,
+    source: "upload" | "camera" = "upload",
+  ) => {
     if (needsGoogleRoute(srcLang, tgtLang) && !googleEnabled) {
       setError(
         googleQuotaExceeded
@@ -232,37 +242,56 @@ export default function App() {
 
     setIsTranslating(true);
     setError(null);
+    setLanguageWarning(null);
+    setPendingFileText(null);
+    setInputText("");
     setOutputText("");
-    setFileStatus(`Reading ${file.name}…`);
+    setFileStatus(
+      source === "camera"
+        ? "Processing camera capture…"
+        : `Reading ${file.name}…`,
+    );
 
     try {
-      const result = await translateFileStream(
-        file,
-        srcLang,
-        tgtLang,
-        ({ translation, extractedText, extractionMethod, filename }) => {
-          if (extractedText !== undefined) {
-            setInputText(extractedText);
-            const methodLabel =
-              extractionMethod === "ocr"
-                ? "scanned image"
-                : extractionMethod === "pdf_ocr"
-                  ? "scanned PDF"
-                  : extractionMethod === "pdf_mixed"
-                    ? "PDF with OCR"
-                    : "file";
-            setFileStatus(
-              `Extracted text from ${filename ?? file.name} (${methodLabel})`,
-            );
-          }
-          if (translation) setOutputText(translation);
-        },
-        controller.signal,
+      const extracted = await extractFile(file, srcLang, source, controller.signal);
+      setInputText(extracted.text);
+
+      const methodLabel =
+        source === "camera"
+          ? "camera capture"
+          : extracted.method === "ocr"
+            ? "scanned image"
+            : extracted.method === "pdf_ocr"
+              ? "scanned PDF"
+              : extracted.method === "pdf_mixed"
+                ? "PDF with OCR"
+                : "file";
+      const storedLabel = extracted.storage_url ? " · saved to storage" : "";
+      setFileStatus(
+        `Extracted text from ${extracted.filename} (${methodLabel})${storedLabel}`,
       );
 
-      if (result.extractedText) {
-        setInputText(result.extractedText);
+      if (
+        extracted.language_check &&
+        !extracted.language_check.matches_source
+      ) {
+        setLanguageWarning(extracted.language_check);
+        setPendingFileText(extracted.text);
+        return;
       }
+
+      if (!extracted.text.trim() || !analyzeInput(extracted.text, maxTokens).valid) {
+        setError("Extracted text is empty or too long to translate.");
+        return;
+      }
+
+      const result = await translateTextStream(
+        extracted.text,
+        srcLang,
+        tgtLang,
+        ({ translation }) => setOutputText(translation),
+        controller.signal,
+      );
 
       if (result.translation) {
         void (async () => {
@@ -273,10 +302,12 @@ export default function App() {
           await saveTranslationLog({
             srcLang,
             tgtLang,
-            srcText: result.extractedText ?? "",
+            srcText: extracted.text,
             tgtText: result.translation,
             route: result.route,
             pivotEnglish: result.pivotEnglish,
+            storageUrl: extracted.storage_url,
+            source: extracted.source,
           });
         })();
       }
@@ -295,7 +326,33 @@ export default function App() {
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (file) void handleFileUpload(file);
+    if (file) void handleFileUpload(file, "upload");
+  };
+
+  const handleCameraCapture = (file: File) => {
+    void handleFileUpload(file, "camera");
+  };
+
+  const handleUseSuggestedLanguage = (code: LangCode) => {
+    setSrcLang(code);
+    setLanguageWarning(null);
+    if (pendingFileText) {
+      void runTranslation(pendingFileText, code, tgtLang);
+      setPendingFileText(null);
+    }
+  };
+
+  const handleTranslateAnyway = () => {
+    setLanguageWarning(null);
+    if (pendingFileText) {
+      void runTranslation(pendingFileText, srcLang, tgtLang);
+      setPendingFileText(null);
+    }
+  };
+
+  const handleDismissLanguageWarning = () => {
+    setLanguageWarning(null);
+    setPendingFileText(null);
   };
 
   const modelReady = status?.ready ?? false;
@@ -334,6 +391,7 @@ export default function App() {
               Free Zomi translator for Paite — English ↔ Paite plus Mizo,
               Meitei, Burmese, Hindi, and more regional and world languages.
               Upload a .txt, .pdf, .docx, or image to translate documents.
+              Use the camera to capture printed text live.
             </p>
           </div>
         </header>
@@ -386,6 +444,15 @@ export default function App() {
 
             <button
               type="button"
+              onClick={() => setCameraOpen(true)}
+              disabled={!canUploadFile}
+              className="rounded-full border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm text-zomi-ink transition hover:border-zomi-red/30 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Camera
+            </button>
+
+            <button
+              type="button"
               onClick={handleTranslate}
               disabled={!canTranslate}
               className="ml-auto inline-flex items-center gap-2 rounded-full bg-zomi-red px-5 py-1.5 text-sm font-semibold text-white transition hover:bg-zomi-red-dark disabled:cursor-not-allowed disabled:bg-stone-300"
@@ -400,10 +467,50 @@ export default function App() {
             </button>
           </div>
 
+          <p className="border-b border-stone-300/30 px-4 py-1.5 text-[10px] text-zomi-muted/80">
+            Tip: match source language to your file before uploading.
+          </p>
+
           {fileStatus && (
             <p className="border-b border-stone-300/40 bg-zomi-paper/60 px-4 py-2 text-xs text-zomi-muted">
               {fileStatus}
             </p>
+          )}
+
+          {languageWarning && (
+            <div className="border-b border-amber-200/60 bg-amber-50/80 px-4 py-3 text-xs text-amber-900">
+              <p className="font-medium">{languageWarning.message}</p>
+              <p className="mt-1">
+                Change the source language or upload a different file before
+                translating.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {languageWarning.suggested_languages.map((lang) => (
+                  <button
+                    key={lang.code}
+                    type="button"
+                    onClick={() => handleUseSuggestedLanguage(lang.code)}
+                    className="rounded-full bg-zomi-red px-3 py-1 text-xs font-semibold text-white transition hover:bg-zomi-red-dark"
+                  >
+                    Use {lang.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={handleTranslateAnyway}
+                  className="rounded-full border border-amber-300/80 bg-white px-3 py-1 text-xs text-amber-950 transition hover:bg-amber-50"
+                >
+                  Translate anyway
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDismissLanguageWarning}
+                  className="rounded-full border border-amber-300/80 bg-white px-3 py-1 text-xs text-amber-950 transition hover:bg-amber-50"
+                >
+                  Upload different file
+                </button>
+              </div>
+            </div>
           )}
 
           {googleQuotaExceeded && (
@@ -575,6 +682,12 @@ export default function App() {
           </p>
         </footer>
       </div>
+
+      <CameraCapture
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        onCapture={handleCameraCapture}
+      />
     </div>
   );
 }

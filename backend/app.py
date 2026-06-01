@@ -8,6 +8,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from file_extract import extract_text, supported_filename
+from lang_detect import language_check_payload
+from object_storage import is_configured as storage_configured, upload_bytes
 from static_files import SpaStaticFiles
 from limits import MAX_TRANSLATION_TOKENS, max_chars_for_tokens
 from translation import TranslationEngine
@@ -76,7 +78,9 @@ def version():
 
 @app.get("/api/status")
 def status():
-    return engine.status()
+    payload = engine.status()
+    payload["object_storage_configured"] = storage_configured()
+    return payload
 
 
 @app.post("/api/translate", response_model=TranslateResponse)
@@ -162,11 +166,135 @@ def translate_stream(body: TranslateRequest):
     )
 
 
+def _storage_payload(stored) -> dict:
+    if stored is None:
+        return {}
+    return {
+        "storage_key": stored.key,
+        "storage_url": stored.url,
+        "storage_bucket": stored.bucket,
+    }
+
+
+def _file_translation_stream(
+    text: str,
+    extracted,
+    src_lang: str,
+    tgt_lang: str,
+    stored,
+    source: str,
+):
+    partial = ""
+    current = 0
+    total = 0
+    pivot_english = None
+    route = None
+    google_chars_used = 0
+    storage = _storage_payload(stored)
+
+    extracted_payload = json.dumps(
+        {
+            "extracted_text": text,
+            "extraction_method": extracted.method,
+            "filename": extracted.filename,
+            "source": source,
+            **storage,
+            "done": False,
+        },
+        ensure_ascii=False,
+    )
+    yield f"data: {extracted_payload}\n\n"
+
+    for chunk in engine.translate_stream(text, src_lang, tgt_lang):
+        partial = chunk["translation"]
+        current = chunk["current"]
+        total = chunk["total"]
+        if chunk.get("route") is not None:
+            route = chunk["route"]
+        if chunk.get("pivot_english") is not None:
+            pivot_english = chunk["pivot_english"]
+        if chunk.get("google_chars_used") is not None:
+            google_chars_used = chunk["google_chars_used"]
+        payload = json.dumps(
+            {
+                "translation": partial,
+                "current": current,
+                "total": total,
+                "done": False,
+            },
+            ensure_ascii=False,
+        )
+        yield f"data: {payload}\n\n"
+
+    final = json.dumps(
+        {
+            "translation": partial,
+            "current": current,
+            "total": total,
+            "route": route,
+            "pivot_english": pivot_english,
+            "google_chars_used": google_chars_used,
+            "extracted_text": text,
+            "extraction_method": extracted.method,
+            "filename": extracted.filename,
+            "source": source,
+            **storage,
+            "done": True,
+        },
+        ensure_ascii=False,
+    )
+    yield f"data: {final}\n\n"
+
+
+@app.post("/api/extract")
+async def extract_file(
+    file: UploadFile = File(...),
+    src_lang: str = Form("eng_Latn"),
+    source: str = Form("upload"),
+):
+    filename = file.filename or "upload"
+    if not supported_filename(filename):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Upload .txt, .pdf, .docx, or an image.",
+        )
+
+    content = await file.read()
+    upload_source = "camera" if source == "camera" else "upload"
+
+    try:
+        extracted = extract_text(content, filename, src_lang)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not read file: {exc}",
+        ) from exc
+
+    stored = upload_bytes(
+        content,
+        filename,
+        content_type=file.content_type,
+        source=upload_source,
+    )
+
+    return {
+        "text": extracted.text,
+        "method": extracted.method,
+        "filename": extracted.filename,
+        "source": upload_source,
+        "language_check": language_check_payload(extracted.text, src_lang),
+        **_storage_payload(stored),
+    }
+
+
 @app.post("/api/translate/file")
 async def translate_file(
     file: UploadFile = File(...),
     src_lang: str = Form("eng_Latn"),
     tgt_lang: str = Form("pai_Latn"),
+    source: str = Form("upload"),
 ):
     if not engine.ready:
         detail = engine.error or "Model is still loading. Please try again shortly."
@@ -180,6 +308,13 @@ async def translate_file(
         )
 
     content = await file.read()
+    upload_source = "camera" if source == "camera" else "upload"
+    stored = upload_bytes(
+        content,
+        filename,
+        content_type=file.content_type,
+        source=upload_source,
+    )
 
     try:
         extracted = extract_text(content, filename, src_lang)
@@ -194,60 +329,15 @@ async def translate_file(
     text = extracted.text
 
     def event_stream():
-        partial = ""
-        current = 0
-        total = 0
-        pivot_english = None
-        route = None
-        google_chars_used = 0
         try:
-            extracted_payload = json.dumps(
-                {
-                    "extracted_text": text,
-                    "extraction_method": extracted.method,
-                    "filename": extracted.filename,
-                    "done": False,
-                },
-                ensure_ascii=False,
+            yield from _file_translation_stream(
+                text,
+                extracted,
+                src_lang,
+                tgt_lang,
+                stored,
+                upload_source,
             )
-            yield f"data: {extracted_payload}\n\n"
-
-            for chunk in engine.translate_stream(text, src_lang, tgt_lang):
-                partial = chunk["translation"]
-                current = chunk["current"]
-                total = chunk["total"]
-                if chunk.get("route") is not None:
-                    route = chunk["route"]
-                if chunk.get("pivot_english") is not None:
-                    pivot_english = chunk["pivot_english"]
-                if chunk.get("google_chars_used") is not None:
-                    google_chars_used = chunk["google_chars_used"]
-                payload = json.dumps(
-                    {
-                        "translation": partial,
-                        "current": current,
-                        "total": total,
-                        "done": False,
-                    },
-                    ensure_ascii=False,
-                )
-                yield f"data: {payload}\n\n"
-            final = json.dumps(
-                {
-                    "translation": partial,
-                    "current": current,
-                    "total": total,
-                    "route": route,
-                    "pivot_english": pivot_english,
-                    "google_chars_used": google_chars_used,
-                    "extracted_text": text,
-                    "extraction_method": extracted.method,
-                    "filename": extracted.filename,
-                    "done": True,
-                },
-                ensure_ascii=False,
-            )
-            yield f"data: {final}\n\n"
         except ValueError as exc:
             payload = json.dumps({"error": str(exc), "done": True}, ensure_ascii=False)
             yield f"data: {payload}\n\n"

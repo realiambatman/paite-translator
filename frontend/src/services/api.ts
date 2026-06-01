@@ -34,6 +34,7 @@ export interface ModelStatus {
   google_translate_enabled?: boolean;
   google_translate_configured?: boolean;
   google_quota?: GoogleQuotaStatus;
+  object_storage_configured?: boolean;
 }
 
 export interface TranslateResult {
@@ -75,6 +76,9 @@ export interface StreamResult {
   extractedText?: string;
   extractionMethod?: string;
   filename?: string;
+  storageUrl?: string;
+  storageKey?: string;
+  source?: string;
 }
 
 export interface TranslateStreamEvent {
@@ -87,6 +91,9 @@ export interface TranslateStreamEvent {
   extracted_text?: string;
   extraction_method?: string;
   filename?: string;
+  storage_url?: string;
+  storage_key?: string;
+  source?: string;
   done: boolean;
   error?: string;
 }
@@ -168,6 +175,57 @@ const FILE_ACCEPT = ".txt,.pdf,.docx,image/jpeg,image/png,image/webp,image/gif,i
 
 export { FILE_ACCEPT };
 
+export interface SuggestedLanguage {
+  code: LangCode;
+  label: string;
+}
+
+export interface LanguageCheck {
+  matches_source: boolean;
+  detected_script: string | null;
+  message: string | null;
+  suggested_languages: SuggestedLanguage[];
+}
+
+export interface ExtractFileResult {
+  text: string;
+  method: string;
+  filename: string;
+  source: string;
+  storage_url?: string;
+  storage_key?: string;
+  language_check?: LanguageCheck;
+}
+
+export async function extractFile(
+  file: File,
+  srcLang: LangCode,
+  source: "upload" | "camera" = "upload",
+  signal?: AbortSignal,
+): Promise<ExtractFileResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("src_lang", srcLang);
+  formData.append("source", source);
+
+  const response = await fetch(`${API_BASE}/api/extract`, {
+    method: "POST",
+    body: formData,
+    signal,
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const detail =
+      typeof payload.detail === "string"
+        ? payload.detail
+        : "Could not read file. Please try again.";
+    throw new Error(detail);
+  }
+
+  return payload as ExtractFileResult;
+}
+
 export function translateFileStream(
   file: File,
   srcLang: LangCode,
@@ -176,14 +234,19 @@ export function translateFileStream(
     extractedText?: string;
     extractionMethod?: string;
     filename?: string;
+    storageUrl?: string;
+    storageKey?: string;
+    source?: string;
   }) => void,
   signal?: AbortSignal,
+  source: "upload" | "camera" = "upload",
 ): Promise<StreamResult> {
   return new Promise((resolve, reject) => {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("src_lang", srcLang);
     formData.append("tgt_lang", tgtLang);
+    formData.append("source", source);
 
     fetch(`${API_BASE}/api/translate/file`, {
       method: "POST",
@@ -231,6 +294,9 @@ export function translateFileStream(
                 extractedText: event.extracted_text,
                 extractionMethod: event.extraction_method,
                 filename: event.filename,
+                storageUrl: event.storage_url,
+                storageKey: event.storage_key,
+                source: event.source,
               });
             }
 
@@ -243,6 +309,9 @@ export function translateFileStream(
                 extractedText: event.extracted_text,
                 extractionMethod: event.extraction_method,
                 filename: event.filename,
+                storageUrl: event.storage_url,
+                storageKey: event.storage_key,
+                source: event.source,
               };
             }
           }
