@@ -5,16 +5,19 @@ from __future__ import annotations
 import io
 import os
 import re
+import unicodedata
 from dataclasses import dataclass
 
 import fitz
 import pytesseract
 from docx import Document
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 MAX_FILE_BYTES = int(os.environ.get("MAX_FILE_BYTES", str(10 * 1024 * 1024)))
 MIN_PDF_TEXT_CHARS = int(os.environ.get("MIN_PDF_TEXT_CHARS", "32"))
 PDF_OCR_DPI = int(os.environ.get("PDF_OCR_DPI", "200"))
+TESSERACT_PSM = os.environ.get("TESSERACT_PSM", "11")
+OCR_MIN_LINE_QUALITY = float(os.environ.get("OCR_MIN_LINE_QUALITY", "0.45"))
 
 SUPPORTED_EXTENSIONS = {
     ".txt",
@@ -47,6 +50,8 @@ TESSERACT_LANG: dict[str, str] = {
     "zho_Hans": "chi_sim",
 }
 
+GARBAGE_CHARS = "©®™°|`~^\\<>{}[]"
+
 
 @dataclass(frozen=True)
 class ExtractResult:
@@ -71,14 +76,91 @@ def _tesseract_lang(src_lang: str) -> str:
     return TESSERACT_LANG.get(src_lang, "eng")
 
 
+def _is_meaningful_char(char: str) -> bool:
+    if char.isspace():
+        return True
+    category = unicodedata.category(char)
+    if category.startswith(("L", "N")):
+        return True
+    return char in ".,!?;:'\"()-/"
+
+
+def _line_quality(line: str) -> float:
+    stripped = line.strip()
+    if len(stripped) < 2:
+        return 0.0
+    meaningful = sum(1 for char in stripped if _is_meaningful_char(char))
+    return meaningful / len(stripped)
+
+
+def _clean_ocr_line(line: str) -> str:
+    line = unicodedata.normalize("NFKC", line)
+    for char in GARBAGE_CHARS:
+        line = line.replace(char, "")
+    line = re.sub(r"[—–\-]{2,}", " ", line)
+    line = re.sub(r"\s*\.{3,}\s*", " ", line)
+    line = re.sub(r"^\s*[\d\W_]{1,3}\s+(?=[A-Za-z])", "", line)
+    line = re.sub(r"\s+", " ", line).strip(" .-|_")
+    return line.strip()
+
+
+def clean_ocr_text(text: str) -> str:
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        cleaned = _clean_ocr_line(raw_line)
+        if not cleaned:
+            continue
+        if _line_quality(cleaned) < OCR_MIN_LINE_QUALITY:
+            continue
+        if len(cleaned) == 1 and not cleaned.isalnum():
+            continue
+        lines.append(cleaned)
+    return "\n".join(lines)
+
+
+def _preprocess_for_ocr(image: Image.Image) -> Image.Image:
+    gray = ImageOps.grayscale(image)
+    gray = ImageOps.autocontrast(gray, cutoff=2)
+    gray = ImageEnhance.Contrast(gray).enhance(1.4)
+    gray = gray.filter(ImageFilter.SHARPEN)
+
+    min_dim = min(gray.size)
+    if min_dim < 1400:
+        scale = 1400 / min_dim
+        gray = gray.resize(
+            (int(gray.width * scale), int(gray.height * scale)),
+            Image.Resampling.LANCZOS,
+        )
+
+    return gray
+
+
+def _tesseract_config(psm: str | None = None) -> str:
+    mode = psm or TESSERACT_PSM
+    return f"--oem 3 --psm {mode} -c preserve_interword_spaces=1"
+
+
 def _ocr_image(image: Image.Image, src_lang: str) -> str:
     lang = _tesseract_lang(src_lang)
-    try:
-        return pytesseract.image_to_string(image, lang=lang)
-    except pytesseract.TesseractError:
-        if lang != "eng":
-            return pytesseract.image_to_string(image, lang="eng")
-        raise
+    prepared = _preprocess_for_ocr(image)
+    configs = [_tesseract_config("11"), _tesseract_config("6")]
+
+    best = ""
+    best_score = 0.0
+    for config in configs:
+        try:
+            raw = pytesseract.image_to_string(prepared, lang=lang, config=config)
+        except pytesseract.TesseractError:
+            if lang == "eng":
+                raise
+            raw = pytesseract.image_to_string(prepared, lang="eng", config=config)
+        cleaned = clean_ocr_text(raw)
+        score = sum(_line_quality(line) for line in cleaned.splitlines())
+        if score > best_score:
+            best_score = score
+            best = cleaned
+
+    return best
 
 
 def _extract_txt(content: bytes) -> str:
@@ -155,6 +237,8 @@ def extract_text(content: bytes, filename: str, src_lang: str) -> ExtractResult:
 
     normalized = _normalize_text(text)
     if not normalized:
-        raise ValueError("No readable text found in this file.")
+        raise ValueError(
+            "No readable text found in this file. OCR works best on clear printed text."
+        )
 
     return ExtractResult(text=normalized, method=method, filename=filename)

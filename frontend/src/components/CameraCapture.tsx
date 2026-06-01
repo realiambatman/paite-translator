@@ -29,7 +29,12 @@ export function CameraCapture({ open, onClose, onCapture }: CameraCaptureProps) 
 
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } },
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            aspectRatio: { ideal: 16 / 9 },
+          },
           audio: false,
         });
         if (cancelled) {
@@ -90,28 +95,32 @@ export function CameraCapture({ open, onClose, onCapture }: CameraCaptureProps) 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/70 p-4">
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-stone-300/50 bg-zomi-paper shadow-2xl">
+      <div className="w-full max-w-4xl overflow-hidden rounded-2xl border border-stone-300/50 bg-zomi-paper shadow-2xl">
         <div className="border-b border-stone-300/40 px-4 py-3">
           <h2 className="font-serif text-lg font-semibold text-zomi-ink">
             Camera capture
           </h2>
           <p className="mt-1 text-sm text-zomi-muted">
-            Point at printed text, then capture to translate.
+            Wide view for documents and signs. Best with printed text — handwriting
+            is less accurate.
           </p>
         </div>
 
-        <div className="relative aspect-[4/3] bg-stone-900">
+        <div className="relative aspect-[21/9] bg-stone-900">
           {error ? (
             <div className="flex h-full items-center justify-center px-6 text-center text-sm text-stone-200">
               {error}
             </div>
           ) : (
-            <video
-              ref={videoRef}
-              playsInline
-              muted
-              className="h-full w-full object-cover"
-            />
+            <>
+              <video
+                ref={videoRef}
+                playsInline
+                muted
+                className="h-full w-full object-cover"
+              />
+              <div className="pointer-events-none absolute inset-4 rounded-lg border-2 border-dashed border-white/40" />
+            </>
           )}
         </div>
 

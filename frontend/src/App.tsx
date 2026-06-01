@@ -19,6 +19,8 @@ import { fetchGoogleQuota, incrementGoogleQuota } from "./services/googleQuota";
 import { FALLBACK_LANGUAGES } from "./languages";
 import { LanguageSelect } from "./components/LanguageSelect";
 import { CameraCapture } from "./components/CameraCapture";
+import { ImageCropModal } from "./components/ImageCropModal";
+import { isImageFile } from "./utils/cropImage";
 
 const HF_LANGS = new Set<LangCode>(["eng_Latn", "pai_Latn"]);
 
@@ -56,11 +58,13 @@ export default function App() {
   const [srcLang, setSrcLang] = useState<LangCode>("eng_Latn");
   const [tgtLang, setTgtLang] = useState<LangCode>("pai_Latn");
   const [isTranslating, setIsTranslating] = useState(false);
+  const [isExtracting, setIsExtracting] = useState(false);
   const [fileStatus, setFileStatus] = useState<string | null>(null);
   const [languageWarning, setLanguageWarning] = useState<LanguageCheck | null>(
     null,
   );
-  const [pendingFileText, setPendingFileText] = useState<string | null>(null);
+  const [cropFile, setCropFile] = useState<File | null>(null);
+  const [cropSource, setCropSource] = useState<"upload" | "camera">("upload");
   const [cameraOpen, setCameraOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [firestoreCharsUsed, setFirestoreCharsUsed] = useState<number | null>(
@@ -221,34 +225,22 @@ export default function App() {
     runTranslation(example.text, example.src, example.tgt);
   };
 
-  const handleFileUpload = async (
+  const extractFileContent = async (
     file: File,
     source: "upload" | "camera" = "upload",
   ) => {
-    if (needsGoogleRoute(srcLang, tgtLang) && !googleEnabled) {
-      setError(
-        googleQuotaExceeded
-          ? "Limit reached. English ↔ Paite still works until midnight UTC."
-          : googleConfigured
-            ? "Translate is unavailable for this language pair right now."
-            : "This language pair needs G Translate. Add G_TRANSLATE_API_KEY on the server.",
-      );
-      return;
-    }
-
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
-    setIsTranslating(true);
+    setIsExtracting(true);
     setError(null);
     setLanguageWarning(null);
-    setPendingFileText(null);
     setInputText("");
     setOutputText("");
     setFileStatus(
       source === "camera"
-        ? "Processing camera capture…"
+        ? "Reading camera capture…"
         : `Reading ${file.name}…`,
     );
 
@@ -265,10 +257,12 @@ export default function App() {
               ? "scanned PDF"
               : extracted.method === "pdf_mixed"
                 ? "PDF with OCR"
-                : "file";
+                : extracted.method === "docx"
+                  ? "document"
+                  : "file";
       const storedLabel = extracted.storage_url ? " · saved to storage" : "";
       setFileStatus(
-        `Extracted text from ${extracted.filename} (${methodLabel})${storedLabel}`,
+        `Text extracted from ${extracted.filename} (${methodLabel})${storedLabel}. Edit if needed, then click Translate.`,
       );
 
       if (
@@ -276,93 +270,69 @@ export default function App() {
         !extracted.language_check.matches_source
       ) {
         setLanguageWarning(extracted.language_check);
-        setPendingFileText(extracted.text);
-        return;
       }
 
-      if (!extracted.text.trim() || !analyzeInput(extracted.text, maxTokens).valid) {
-        setError("Extracted text is empty or too long to translate.");
-        return;
-      }
-
-      const result = await translateTextStream(
-        extracted.text,
-        srcLang,
-        tgtLang,
-        ({ translation }) => setOutputText(translation),
-        controller.signal,
-      );
-
-      if (result.translation) {
-        void (async () => {
-          if (result.googleCharsUsed && result.googleCharsUsed > 0) {
-            await incrementGoogleQuota(result.googleCharsUsed);
-            await refreshQuota();
-          }
-          await saveTranslationLog({
-            srcLang,
-            tgtLang,
-            srcText: extracted.text,
-            tgtText: result.translation,
-            route: result.route,
-            pivotEnglish: result.pivotEnglish,
-            storageUrl: extracted.storage_url,
-            source: extracted.source,
-          });
-        })();
+      if (!extracted.text.trim()) {
+        setError("No readable text found in this file.");
+      } else if (!analyzeInput(extracted.text, maxTokens).valid) {
+        setError("Extracted text is too long — delete some before translating.");
       }
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") return;
-      setError(err instanceof Error ? err.message : "File translation failed.");
+      setError(err instanceof Error ? err.message : "Could not read file.");
+      setFileStatus(null);
     } finally {
       if (abortRef.current === controller) {
         abortRef.current = null;
       }
-      setIsTranslating(false);
-      setFileStatus(null);
+      setIsExtracting(false);
     }
+  };
+
+  const handleIncomingFile = (
+    file: File,
+    source: "upload" | "camera" = "upload",
+  ) => {
+    if (isImageFile(file)) {
+      setCropSource(source);
+      setCropFile(file);
+      return;
+    }
+    void extractFileContent(file, source);
   };
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (file) void handleFileUpload(file, "upload");
+    if (file) handleIncomingFile(file, "upload");
   };
 
   const handleCameraCapture = (file: File) => {
-    void handleFileUpload(file, "camera");
+    handleIncomingFile(file, "camera");
+  };
+
+  const handleCropConfirm = (file: File) => {
+    void extractFileContent(file, cropSource);
   };
 
   const handleUseSuggestedLanguage = (code: LangCode) => {
     setSrcLang(code);
     setLanguageWarning(null);
-    if (pendingFileText) {
-      void runTranslation(pendingFileText, code, tgtLang);
-      setPendingFileText(null);
-    }
-  };
-
-  const handleTranslateAnyway = () => {
-    setLanguageWarning(null);
-    if (pendingFileText) {
-      void runTranslation(pendingFileText, srcLang, tgtLang);
-      setPendingFileText(null);
-    }
   };
 
   const handleDismissLanguageWarning = () => {
     setLanguageWarning(null);
-    setPendingFileText(null);
   };
 
   const modelReady = status?.ready ?? false;
   const canTranslate =
     inputAnalysis.valid &&
     !isTranslating &&
+    !isExtracting &&
     modelReady &&
     (!googleRequired || googleEnabled);
   const canUploadFile =
-    !isTranslating && modelReady && (!googleRequired || googleEnabled);
+    !isTranslating && !isExtracting && modelReady;
   const barColor = inputAnalysis.overLimit
     ? "bg-zomi-red"
     : inputAnalysis.charRatio >= 0.85
@@ -390,8 +360,6 @@ export default function App() {
             <p className="mt-1 max-w-lg text-sm text-zomi-muted">
               Free Zomi translator for Paite — English ↔ Paite plus Mizo,
               Meitei, Burmese, Hindi, and more regional and world languages.
-              Upload a .txt, .pdf, .docx, or image to translate documents.
-              Use the camera to capture printed text live.
             </p>
           </div>
         </header>
@@ -404,13 +372,13 @@ export default function App() {
               value={srcLang}
               onChange={setSrcLang}
               languages={availableLanguages}
-              disabled={isTranslating}
+              disabled={isTranslating || isExtracting}
             />
 
             <button
               type="button"
               onClick={handleSwap}
-              disabled={isTranslating}
+              disabled={isTranslating || isExtracting}
               className="rounded-full border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm text-zomi-red transition hover:border-zomi-red/30 hover:bg-white disabled:opacity-60"
               aria-label="Swap languages"
             >
@@ -421,7 +389,7 @@ export default function App() {
               value={tgtLang}
               onChange={setTgtLang}
               languages={availableLanguages}
-              disabled={isTranslating}
+              disabled={isTranslating || isExtracting}
             />
 
             <input
@@ -463,12 +431,13 @@ export default function App() {
                   aria-hidden
                 />
               )}
-              {isTranslating ? "Translating…" : "Translate"}
+              {isTranslating ? "Translating…" : isExtracting ? "Reading…" : "Translate"}
             </button>
           </div>
 
           <p className="border-b border-stone-300/30 px-4 py-1.5 text-[10px] text-zomi-muted/80">
-            Tip: match source language to your file before uploading.
+            Upload or camera extracts text only — edit, then click Translate.
+            PDFs: delete unwanted parts in the box first.
           </p>
 
           {fileStatus && (
@@ -481,8 +450,7 @@ export default function App() {
             <div className="border-b border-amber-200/60 bg-amber-50/80 px-4 py-3 text-xs text-amber-900">
               <p className="font-medium">{languageWarning.message}</p>
               <p className="mt-1">
-                Change the source language or upload a different file before
-                translating.
+                Switch source language or edit the text, then click Translate.
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {languageWarning.suggested_languages.map((lang) => (
@@ -497,17 +465,10 @@ export default function App() {
                 ))}
                 <button
                   type="button"
-                  onClick={handleTranslateAnyway}
-                  className="rounded-full border border-amber-300/80 bg-white px-3 py-1 text-xs text-amber-950 transition hover:bg-amber-50"
-                >
-                  Translate anyway
-                </button>
-                <button
-                  type="button"
                   onClick={handleDismissLanguageWarning}
                   className="rounded-full border border-amber-300/80 bg-white px-3 py-1 text-xs text-amber-950 transition hover:bg-amber-50"
                 >
-                  Upload different file
+                  Got it
                 </button>
               </div>
             </div>
@@ -541,7 +502,7 @@ export default function App() {
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 placeholder="Enter text to translate…"
-                disabled={isTranslating}
+                disabled={isTranslating || isExtracting}
                 className="min-h-[280px] flex-1 resize-none border-0 bg-transparent px-4 pb-2 text-base leading-relaxed text-zomi-ink outline-none placeholder:text-stone-400 disabled:opacity-70 md:min-h-[360px]"
               />
               <div className="border-t border-stone-300/30 px-4 py-3">
@@ -637,7 +598,7 @@ export default function App() {
                 key={index}
                 type="button"
                 onClick={() => handleExample(example)}
-                disabled={isTranslating || !modelReady}
+                disabled={isTranslating || isExtracting || !modelReady}
                 className="min-w-[220px] max-w-xs shrink-0 rounded-xl border border-stone-300/50 bg-zomi-paper/60 p-3 text-left text-sm text-zomi-ink transition hover:border-zomi-red/30 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <span className="line-clamp-3">{example.text}</span>
@@ -687,6 +648,13 @@ export default function App() {
         open={cameraOpen}
         onClose={() => setCameraOpen(false)}
         onCapture={handleCameraCapture}
+      />
+
+      <ImageCropModal
+        open={cropFile != null}
+        file={cropFile}
+        onClose={() => setCropFile(null)}
+        onConfirm={handleCropConfirm}
       />
     </div>
   );
