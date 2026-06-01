@@ -257,13 +257,16 @@ export default function App() {
     setInputText("");
     setOutputText("");
     setFileStatus(
-      source === "camera"
-        ? "Reading camera capture…"
-        : `Reading ${file.name}…`,
+      source === "camera" ? "Reading camera capture…" : `Reading ${file.name}…`,
     );
 
     try {
-      const extracted = await extractFile(file, srcLang, source, controller.signal);
+      const extracted = await extractFile(
+        file,
+        srcLang,
+        source,
+        controller.signal,
+      );
       setInputText(extracted.text);
       setLastExtractMeta({
         storageUrl: extracted.storage_url,
@@ -298,7 +301,9 @@ export default function App() {
       if (!extracted.text.trim()) {
         setError("No readable text found in this file.");
       } else if (!analyzeInput(extracted.text, maxTokens).valid) {
-        setError("Extracted text is too long — delete some before translating.");
+        setError(
+          "Extracted text is too long — delete some before translating.",
+        );
       }
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") return;
@@ -354,8 +359,7 @@ export default function App() {
     !isExtracting &&
     modelReady &&
     (!googleRequired || googleEnabled);
-  const canUploadFile =
-    !isTranslating && !isExtracting && modelReady;
+  const canUploadFile = !isTranslating && !isExtracting && modelReady;
 
   useEffect(() => {
     const hasFiles = (transfer: DataTransfer) =>
@@ -500,7 +504,11 @@ export default function App() {
                   aria-hidden
                 />
               )}
-              {isTranslating ? "Translating…" : isExtracting ? "Reading…" : "Translate"}
+              {isTranslating
+                ? "Translating…"
+                : isExtracting
+                  ? "Reading…"
+                  : "Translate"}
             </button>
           </div>
 
@@ -685,10 +693,10 @@ export default function App() {
             About this Zomi translator
           </h2>
           <p>
-            This free Zomi translator helps you translate between English and
-            Paite, the most widely used Zomi language. Paite is spoken across
-            Manipur, Mizoram, Assam, and the Zomi diaspora worldwide. Use this
-            Zomi language translator and Paite translator for everyday phrases,
+            Zomi translator helps you translate between English and Paite, the
+            most widely used Zomi language. Paite is spoken across Manipur,
+            Mizoram, Assam, and the Zomi diaspora worldwide. Use this Zomi
+            language translator and Paite translator for everyday phrases,
             learning, and connecting with Zomi-speaking communities.
           </p>
         </section>
@@ -740,7 +748,9 @@ export default function App() {
       {isDragging && canUploadFile && (
         <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-zomi-red/10 backdrop-blur-[1px]">
           <div className="rounded-2xl border-2 border-dashed border-zomi-red bg-white/95 px-8 py-6 text-center shadow-lg">
-            <p className="font-medium text-zomi-ink">Drop file to extract text</p>
+            <p className="font-medium text-zomi-ink">
+              Drop file to extract text
+            </p>
             <p className="mt-1 text-xs text-zomi-muted">
               .txt, .pdf, .docx, or image
             </p>

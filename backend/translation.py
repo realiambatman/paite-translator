@@ -136,6 +136,47 @@ def _line_body(line: str) -> tuple[str | None, str | None, str | None, str]:
     return None, None, line.strip(), "plain"
 
 
+def _is_structured_line(body: str) -> bool:
+    """Lines that should stay separate (forms, headers, bullets), not merged."""
+    stripped = body.strip()
+    if not stripped:
+        return True
+
+    if re.match(r"^[\u2022\u25cf\u25cb\u25aa\-*●○▪]\s", stripped) or re.match(
+        r"^\d+\.\s", stripped
+    ):
+        return True
+
+    if re.match(r"^[^:\n]{1,80}:", stripped):
+        return True
+
+    letters = [char for char in stripped if char.isalpha()]
+    if (
+        letters
+        and len(stripped) < 80
+        and sum(1 for char in letters if char.isupper()) / len(letters) >= 0.85
+    ):
+        return True
+
+    return False
+
+
+def _has_wrapped_prose_run(bodies: list[str]) -> bool:
+    """True when 2+ consecutive lines look like one sentence split across lines."""
+    run = 0
+    for body in bodies:
+        if _is_structured_line(body):
+            run = 0
+            continue
+        if _ends_sentence(body):
+            run = 0
+            continue
+        run += 1
+        if run >= 2:
+            return True
+    return False
+
+
 def _is_multiline_sentence_document(text: str) -> bool:
     lines = [line for line in text.split("\n") if line.strip()]
     if len(lines) < 2:
@@ -145,8 +186,14 @@ def _is_multiline_sentence_document(text: str) -> bool:
     if timestamp_lines >= 2:
         return True
 
-    non_sentence_lines = sum(1 for line in lines if not _ends_sentence(_line_body(line)[2] or ""))
-    return non_sentence_lines >= 2 and non_sentence_lines / len(lines) >= 0.4
+    bodies = [_line_body(line)[2] or "" for line in lines]
+    structured_ratio = sum(1 for body in bodies if _is_structured_line(body)) / len(
+        bodies
+    )
+    if structured_ratio >= 0.35:
+        return False
+
+    return _has_wrapped_prose_run(bodies)
 
 
 def _redistribute_by_word_counts(source_fragments: list[str], translated: str) -> list[str]:
@@ -221,17 +268,41 @@ def _split_multiline_document(text: str) -> tuple[list[str], list[int], dict]:
         current_fragments = []
         current_meta = []
 
+    def flush_single_line(
+        line_index: int,
+        body: str,
+        meta: tuple[str | None, str | None],
+    ) -> None:
+        groups.append(
+            {
+                "kind": "merged",
+                "unit_index": len(units),
+                "line_indices": [line_index],
+                "fragments": [body],
+                "meta": [meta],
+            }
+        )
+        units.append(body.strip())
+        unit_line_counts.append(1)
+
     for line_index, line in enumerate(raw_lines):
         if not line.strip():
             flush_group()
             continue
 
         indent, timestamp, body, _kind = _line_body(line)
+        body = body or ""
+
+        if _is_structured_line(body) and not timestamp:
+            flush_group()
+            flush_single_line(line_index, body, (indent, timestamp))
+            continue
+
         current_indices.append(line_index)
-        current_fragments.append(body or "")
+        current_fragments.append(body)
         current_meta.append((indent, timestamp))
 
-        if _ends_sentence(body or "") or _ends_sentence(" ".join(current_fragments)):
+        if _ends_sentence(body) or _ends_sentence(" ".join(current_fragments)):
             flush_group()
 
     flush_group()
