@@ -118,6 +118,21 @@ def _langdetect_guess(text: str) -> str | None:
     return LANGDETECT_TO_CODE.get(detected)
 
 
+LATIN_ACRONYMS = frozenset(
+    {"nlp", "api", "url", "pdf", "ocr", "cpu", "gpu", "ram", "sms", "id", "tv", "ui"}
+)
+
+OCR_GARBAGE_STOPWORDS = frozenset(
+    """
+    a an as at be by do go he if in is it me my no of on or so to up us we
+    am id ok re ve ex al ed er es la le li lo na ne ni nu od ol om op os ow ox
+    pa pe pi po ra re ri ro sa se si so ta te ti to un ur vi ye yo the and for
+    not you all can had her was one our out are but his has have from they this
+    that with into used text its also than them then when what some into english
+    """.split()
+)
+
+
 def check_ocr_latin_garbage(text: str, src_lang: str) -> LanguageCheck | None:
     """Detect Latin gibberish from OCR with the wrong script/language selected."""
     expected_scripts = LANG_SCRIPTS.get(src_lang, {"latin"})
@@ -141,24 +156,48 @@ def check_ocr_latin_garbage(text: str, src_lang: str) -> LanguageCheck | None:
     if latin_count < 6:
         return None
 
+    guessed = _langdetect_guess(stripped)
+    if guessed == src_lang or (
+        guessed in LATIN_COMPATIBLE and src_lang in LATIN_COMPATIBLE
+    ):
+        return None
+
     words = re.findall(r"\b[^\W_]+\b", stripped, flags=re.UNICODE)
     if len(words) < 2:
         return None
 
     suspicious = 0
+    strong_signals = 0
     for word in words:
+        lower = word.lower()
+        if lower in OCR_GARBAGE_STOPWORDS:
+            continue
+        if len(word) <= 2 and word.islower():
+            continue
+
         if re.search(r"[a-z][A-Z]|[A-Z][a-z][A-Z]", word):
             suspicious += 1
-        elif len(word) <= 5 and word.isupper() and word.isalpha():
+            strong_signals += 1
+        elif (
+            3 <= len(word) <= 4
+            and word.isupper()
+            and word.isalpha()
+            and lower not in LATIN_ACRONYMS
+        ):
             suspicious += 1
-        elif len(word) <= 3 and word.isalpha():
-            suspicious += 1
-        elif word.isalpha() and len(word) >= 4:
+            strong_signals += 1
+        elif word.isalpha() and len(word) >= 5:
             vowels = len(re.findall(r"[aeiouAEIOU]", word))
-            if vowels == 0 or vowels / len(word) < 0.15:
+            if vowels == 0 or vowels / len(word) < 0.12:
                 suspicious += 1
+                if word.isupper():
+                    strong_signals += 1
 
-    if suspicious < max(2, len(words) * 0.35):
+    if strong_signals >= 2 and suspicious >= 2:
+        pass
+    elif suspicious < max(3, len(words) * 0.45):
+        return None
+    elif strong_signals == 0:
         return None
 
     src_label = language_label(src_lang)
