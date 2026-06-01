@@ -10,3 +10,7 @@ sentencepiece>=0.2.0
 protobuf>=5.29.0
 python-multipart==0.0.20
 ctranslate2>=4.5.0
+pymupdf>=1.25.0
+python-docx>=1.1.2
+pytesseract>=0.3.13
+Pillow>=11.0.0

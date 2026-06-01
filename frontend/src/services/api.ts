@@ -72,6 +72,9 @@ export interface StreamResult {
   route?: string | null;
   pivotEnglish?: string | null;
   googleCharsUsed?: number;
+  extractedText?: string;
+  extractionMethod?: string;
+  filename?: string;
 }
 
 export interface TranslateStreamEvent {
@@ -81,6 +84,9 @@ export interface TranslateStreamEvent {
   route?: string | null;
   pivot_english?: string | null;
   google_chars_used?: number;
+  extracted_text?: string;
+  extraction_method?: string;
+  filename?: string;
   done: boolean;
   error?: string;
 }
@@ -145,6 +151,98 @@ export function translateTextStream(
                 route: event.route ?? null,
                 pivotEnglish: event.pivot_english ?? null,
                 googleCharsUsed: event.google_chars_used ?? 0,
+                extractedText: event.extracted_text,
+                extractionMethod: event.extraction_method,
+                filename: event.filename,
+              };
+            }
+          }
+        }
+        resolve(finalResult);
+      })
+      .catch(reject);
+  });
+}
+
+const FILE_ACCEPT = ".txt,.pdf,.docx,image/jpeg,image/png,image/webp,image/gif,image/bmp";
+
+export { FILE_ACCEPT };
+
+export function translateFileStream(
+  file: File,
+  srcLang: LangCode,
+  tgtLang: LangCode,
+  onChunk: (update: StreamUpdate & {
+    extractedText?: string;
+    extractionMethod?: string;
+    filename?: string;
+  }) => void,
+  signal?: AbortSignal,
+): Promise<StreamResult> {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("src_lang", srcLang);
+    formData.append("tgt_lang", tgtLang);
+
+    fetch(`${API_BASE}/api/translate/file`, {
+      method: "POST",
+      body: formData,
+      signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          const detail =
+            typeof payload.detail === "string"
+              ? payload.detail
+              : "File translation failed. Please try again.";
+          throw new Error(detail);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error("Streaming not supported.");
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalResult: StreamResult = { translation: "" };
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const event = JSON.parse(line.slice(6)) as TranslateStreamEvent;
+            if (event.error) throw new Error(event.error);
+
+            if (
+              event.extracted_text !== undefined ||
+              event.translation !== undefined
+            ) {
+              onChunk({
+                translation: event.translation ?? "",
+                current: event.current ?? 0,
+                total: event.total ?? 0,
+                extractedText: event.extracted_text,
+                extractionMethod: event.extraction_method,
+                filename: event.filename,
+              });
+            }
+
+            if (event.done && event.translation !== undefined) {
+              finalResult = {
+                translation: event.translation,
+                route: event.route ?? null,
+                pivotEnglish: event.pivot_english ?? null,
+                googleCharsUsed: event.google_chars_used ?? 0,
+                extractedText: event.extracted_text,
+                extractionMethod: event.extraction_method,
+                filename: event.filename,
               };
             }
           }

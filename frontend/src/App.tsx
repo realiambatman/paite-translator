@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   fetchStatus,
+  FILE_ACCEPT,
   type LangCode,
   type Language,
   type ModelStatus,
+  translateFileStream,
   translateTextStream,
 } from "./services/api";
 import {
@@ -52,12 +54,14 @@ export default function App() {
   const [srcLang, setSrcLang] = useState<LangCode>("eng_Latn");
   const [tgtLang, setTgtLang] = useState<LangCode>("pai_Latn");
   const [isTranslating, setIsTranslating] = useState(false);
+  const [fileStatus, setFileStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [firestoreCharsUsed, setFirestoreCharsUsed] = useState<number | null>(
     null,
   );
   const abortRef = useRef<AbortController | null>(null);
   const outputRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const languages = status?.languages ?? FALLBACK_LANGUAGES;
   const maxTokens = status?.limits?.max_tokens ?? DEFAULT_MAX_TOKENS;
@@ -210,12 +214,98 @@ export default function App() {
     runTranslation(example.text, example.src, example.tgt);
   };
 
+  const handleFileUpload = async (file: File) => {
+    if (needsGoogleRoute(srcLang, tgtLang) && !googleEnabled) {
+      setError(
+        googleQuotaExceeded
+          ? "Limit reached. English ↔ Paite still works until midnight UTC."
+          : googleConfigured
+            ? "Translate is unavailable for this language pair right now."
+            : "This language pair needs G Translate. Add G_TRANSLATE_API_KEY on the server.",
+      );
+      return;
+    }
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setIsTranslating(true);
+    setError(null);
+    setOutputText("");
+    setFileStatus(`Reading ${file.name}…`);
+
+    try {
+      const result = await translateFileStream(
+        file,
+        srcLang,
+        tgtLang,
+        ({ translation, extractedText, extractionMethod, filename }) => {
+          if (extractedText !== undefined) {
+            setInputText(extractedText);
+            const methodLabel =
+              extractionMethod === "ocr"
+                ? "scanned image"
+                : extractionMethod === "pdf_ocr"
+                  ? "scanned PDF"
+                  : extractionMethod === "pdf_mixed"
+                    ? "PDF with OCR"
+                    : "file";
+            setFileStatus(
+              `Extracted text from ${filename ?? file.name} (${methodLabel})`,
+            );
+          }
+          if (translation) setOutputText(translation);
+        },
+        controller.signal,
+      );
+
+      if (result.extractedText) {
+        setInputText(result.extractedText);
+      }
+
+      if (result.translation) {
+        void (async () => {
+          if (result.googleCharsUsed && result.googleCharsUsed > 0) {
+            await incrementGoogleQuota(result.googleCharsUsed);
+            await refreshQuota();
+          }
+          await saveTranslationLog({
+            srcLang,
+            tgtLang,
+            srcText: result.extractedText ?? "",
+            tgtText: result.translation,
+            route: result.route,
+            pivotEnglish: result.pivotEnglish,
+          });
+        })();
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
+      setError(err instanceof Error ? err.message : "File translation failed.");
+    } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
+      setIsTranslating(false);
+      setFileStatus(null);
+    }
+  };
+
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) void handleFileUpload(file);
+  };
+
   const modelReady = status?.ready ?? false;
   const canTranslate =
     inputAnalysis.valid &&
     !isTranslating &&
     modelReady &&
     (!googleRequired || googleEnabled);
+  const canUploadFile =
+    !isTranslating && modelReady && (!googleRequired || googleEnabled);
   const barColor = inputAnalysis.overLimit
     ? "bg-zomi-red"
     : inputAnalysis.charRatio >= 0.85
@@ -243,6 +333,7 @@ export default function App() {
             <p className="mt-1 max-w-lg text-sm text-zomi-muted">
               Free Zomi translator for Paite — English ↔ Paite plus Mizo,
               Meitei, Burmese, Hindi, and more regional and world languages.
+              Upload a .txt, .pdf, .docx, or image to translate documents.
             </p>
           </div>
         </header>
@@ -275,6 +366,24 @@ export default function App() {
               disabled={isTranslating}
             />
 
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={FILE_ACCEPT}
+              onChange={handleFileChange}
+              className="hidden"
+              disabled={!canUploadFile}
+            />
+
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!canUploadFile}
+              className="rounded-full border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm text-zomi-ink transition hover:border-zomi-red/30 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Upload file
+            </button>
+
             <button
               type="button"
               onClick={handleTranslate}
@@ -290,6 +399,12 @@ export default function App() {
               {isTranslating ? "Translating…" : "Translate"}
             </button>
           </div>
+
+          {fileStatus && (
+            <p className="border-b border-stone-300/40 bg-zomi-paper/60 px-4 py-2 text-xs text-zomi-muted">
+              {fileStatus}
+            </p>
+          )}
 
           {googleQuotaExceeded && (
             <p className="border-b border-amber-200/60 bg-amber-50/80 px-4 py-2 text-xs text-amber-900">

@@ -2,11 +2,12 @@ import json
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from file_extract import extract_text, supported_filename
 from static_files import SpaStaticFiles
 from limits import MAX_TRANSLATION_TOKENS, max_chars_for_tokens
 from translation import TranslationEngine
@@ -142,6 +143,106 @@ def translate_stream(body: TranslateRequest):
                     "route": route,
                     "pivot_english": pivot_english,
                     "google_chars_used": google_chars_used,
+                    "done": True,
+                },
+                ensure_ascii=False,
+            )
+            yield f"data: {final}\n\n"
+        except ValueError as exc:
+            payload = json.dumps({"error": str(exc), "done": True}, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
+        except Exception as exc:
+            payload = json.dumps({"error": str(exc), "done": True}, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/translate/file")
+async def translate_file(
+    file: UploadFile = File(...),
+    src_lang: str = Form("eng_Latn"),
+    tgt_lang: str = Form("pai_Latn"),
+):
+    if not engine.ready:
+        detail = engine.error or "Model is still loading. Please try again shortly."
+        raise HTTPException(status_code=503, detail=detail)
+
+    filename = file.filename or "upload"
+    if not supported_filename(filename):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Upload .txt, .pdf, .docx, or an image.",
+        )
+
+    content = await file.read()
+
+    try:
+        extracted = extract_text(content, filename, src_lang)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not read file: {exc}",
+        ) from exc
+
+    text = extracted.text
+
+    def event_stream():
+        partial = ""
+        current = 0
+        total = 0
+        pivot_english = None
+        route = None
+        google_chars_used = 0
+        try:
+            extracted_payload = json.dumps(
+                {
+                    "extracted_text": text,
+                    "extraction_method": extracted.method,
+                    "filename": extracted.filename,
+                    "done": False,
+                },
+                ensure_ascii=False,
+            )
+            yield f"data: {extracted_payload}\n\n"
+
+            for chunk in engine.translate_stream(text, src_lang, tgt_lang):
+                partial = chunk["translation"]
+                current = chunk["current"]
+                total = chunk["total"]
+                if chunk.get("route") is not None:
+                    route = chunk["route"]
+                if chunk.get("pivot_english") is not None:
+                    pivot_english = chunk["pivot_english"]
+                if chunk.get("google_chars_used") is not None:
+                    google_chars_used = chunk["google_chars_used"]
+                payload = json.dumps(
+                    {
+                        "translation": partial,
+                        "current": current,
+                        "total": total,
+                        "done": False,
+                    },
+                    ensure_ascii=False,
+                )
+                yield f"data: {payload}\n\n"
+            final = json.dumps(
+                {
+                    "translation": partial,
+                    "current": current,
+                    "total": total,
+                    "route": route,
+                    "pivot_english": pivot_english,
+                    "google_chars_used": google_chars_used,
+                    "extracted_text": text,
+                    "extraction_method": extracted.method,
+                    "filename": extracted.filename,
                     "done": True,
                 },
                 ensure_ascii=False,
