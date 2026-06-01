@@ -15,6 +15,7 @@ from lang_detect import (
     LANG_SCRIPTS,
     SCRIPT_LABELS,
     SCRIPT_TO_LANGS,
+    _langdetect_guess,
     check_ocr_latin_garbage,
 )
 from languages import language_label
@@ -30,13 +31,14 @@ MIN_EXTRACTED_WORDS = int(os.environ.get("MIN_EXTRACTED_WORDS", "1"))
 MIN_MEANINGFUL_RATIO = float(os.environ.get("MIN_MEANINGFUL_RATIO", "0.5"))
 MIN_AVG_LINE_QUALITY = float(os.environ.get("MIN_AVG_LINE_QUALITY", "0.52"))
 OCR_PROBE_MAX_DIM = int(os.environ.get("OCR_PROBE_MAX_DIM", "900"))
-OCR_PROBE_MIN_CONF = int(os.environ.get("OCR_PROBE_MIN_CONF", "45"))
-OCR_PROBE_MIN_WORDS = int(os.environ.get("OCR_PROBE_MIN_WORDS", "2"))
+OCR_PROBE_MIN_CONF = int(os.environ.get("OCR_PROBE_MIN_CONF", "30"))
+OCR_PROBE_MIN_WORDS = int(os.environ.get("OCR_PROBE_MIN_WORDS", "1"))
 OCR_PROBE_MIN_WORD_LEN = int(os.environ.get("OCR_PROBE_MIN_WORD_LEN", "2"))
-OCR_PROBE_MIN_LONG_WORDS = int(os.environ.get("OCR_PROBE_MIN_LONG_WORDS", "1"))
-OCR_PROBE_MIN_TOTAL_CONF = int(os.environ.get("OCR_PROBE_MIN_TOTAL_CONF", "100"))
-OCR_NOISE_SHORT_WORD_RATIO = float(os.environ.get("OCR_NOISE_SHORT_WORD_RATIO", "0.65"))
+OCR_PROBE_MIN_LONG_WORDS = int(os.environ.get("OCR_PROBE_MIN_LONG_WORDS", "0"))
+OCR_PROBE_MIN_TOTAL_CONF = int(os.environ.get("OCR_PROBE_MIN_TOTAL_CONF", "55"))
+OCR_NOISE_SHORT_WORD_RATIO = float(os.environ.get("OCR_NOISE_SHORT_WORD_RATIO", "0.72"))
 OCR_NOISE_MIN_REAL_WORDS = int(os.environ.get("OCR_NOISE_MIN_REAL_WORDS", "2"))
+OCR_MAX_UPSCALE_DIM = int(os.environ.get("OCR_MAX_UPSCALE_DIM", "2200"))
 OCR_PROBE_MIN_MATCH_SCORE = float(os.environ.get("OCR_PROBE_MIN_MATCH_SCORE", "80"))
 OCR_PROBE_LANG_MARGIN = float(os.environ.get("OCR_PROBE_LANG_MARGIN", "1.4"))
 PROBE_TESSERACT_LANGS = ("eng", "hin", "ben", "mya")
@@ -124,19 +126,31 @@ def _real_word_count(text: str) -> int:
 
 
 def _looks_like_ocr_noise(text: str) -> bool:
-    words = re.findall(r"\b[^\W_]+\b", text, flags=re.UNICODE)
+    stripped = text.strip()
+    words = re.findall(r"\b[^\W_]+\b", stripped, flags=re.UNICODE)
+    if not words:
+        return True
     if len(words) < 2:
-        return True
+        return len(stripped) < 10
 
-    short_words = sum(1 for word in words if len(word) <= 3)
-    if short_words / len(words) >= OCR_NOISE_SHORT_WORD_RATIO:
-        return True
+    real = _real_word_count(stripped)
+    if real >= 3:
+        return False
 
-    if _real_word_count(text) < OCR_NOISE_MIN_REAL_WORDS:
-        return True
+    if len(stripped) >= 20 and _langdetect_guess(stripped):
+        return False
 
+    short_ratio = sum(1 for word in words if len(word) <= 3) / len(words)
     avg_len = sum(len(word) for word in words) / len(words)
-    if avg_len < 3.8 and _real_word_count(text) < 3:
+
+    if real >= 2 and len(stripped) >= 28 and avg_len >= 3.8:
+        return False
+
+    if real < 1:
+        return True
+    if real < OCR_NOISE_MIN_REAL_WORDS and short_ratio >= OCR_NOISE_SHORT_WORD_RATIO:
+        return True
+    if short_ratio >= 0.75 and avg_len < 3.6 and real < 3:
         return True
 
     return False
@@ -145,7 +159,8 @@ def _looks_like_ocr_noise(text: str) -> bool:
 def _no_text_in_image_error() -> ValueError:
     return ValueError(
         "This image does not appear to contain readable text. "
-        "Use a clear photo of printed text, or crop tightly around the words."
+        "Use a clear photo of printed text, crop tightly around the words, "
+        "and for screen photos reduce glare and move closer so the text is larger."
     )
 
 
@@ -197,7 +212,7 @@ def _validate_extracted_text(text: str, *, from_ocr: bool) -> str:
                 "OCR works best on clear printed text."
             )
         avg_quality = sum(_line_quality(line) for line in lines) / len(lines)
-        if avg_quality < MIN_AVG_LINE_QUALITY:
+        if avg_quality < MIN_AVG_LINE_QUALITY and _real_word_count(normalized) < 3:
             raise ValueError(
                 "No readable text found in this file. "
                 "OCR works best on clear printed text."
@@ -421,9 +436,9 @@ def _image_likely_has_text(image: Image.Image, src_lang: str) -> bool:
             long_words += 1
 
     return (
-        confident_words >= OCR_PROBE_MIN_WORDS
-        and long_words >= OCR_PROBE_MIN_LONG_WORDS
-        and total_conf >= OCR_PROBE_MIN_TOTAL_CONF
+        (confident_words >= 2 and total_conf >= OCR_PROBE_MIN_TOTAL_CONF)
+        or (long_words >= max(OCR_PROBE_MIN_LONG_WORDS, 1) and total_conf >= 35)
+        or (confident_words >= 1 and total_conf >= 70)
     )
 
 
@@ -432,16 +447,43 @@ def _preprocess_for_ocr(image: Image.Image) -> Image.Image:
     gray = ImageOps.autocontrast(gray, cutoff=2)
     gray = ImageEnhance.Contrast(gray).enhance(1.4)
     gray = gray.filter(ImageFilter.SHARPEN)
-
-    min_dim = min(gray.size)
-    if min_dim < 1400:
-        scale = 1400 / min_dim
-        gray = gray.resize(
-            (int(gray.width * scale), int(gray.height * scale)),
-            Image.Resampling.LANCZOS,
-        )
-
+    gray = _upscale_for_ocr(gray)
     return gray
+
+
+def _preprocess_for_ocr_screen(image: Image.Image) -> Image.Image:
+    """Milder preprocessing for photos of monitors (reduces moire artifacts)."""
+    gray = ImageOps.grayscale(image)
+    gray = ImageOps.autocontrast(gray, cutoff=1)
+    gray = gray.filter(ImageFilter.MedianFilter(size=3))
+    gray = ImageEnhance.Contrast(gray).enhance(1.15)
+    gray = _upscale_for_ocr(gray, target_min=1200)
+    return gray
+
+
+def _upscale_for_ocr(image: Image.Image, target_min: int = 1400) -> Image.Image:
+    min_dim = min(image.size)
+    longest = max(image.size)
+    if min_dim >= target_min:
+        if longest > OCR_MAX_UPSCALE_DIM:
+            scale = OCR_MAX_UPSCALE_DIM / longest
+            return image.resize(
+                (int(image.width * scale), int(image.height * scale)),
+                Image.Resampling.LANCZOS,
+            )
+        return image
+    scale = min(target_min / min_dim, OCR_MAX_UPSCALE_DIM / longest)
+    return image.resize(
+        (int(image.width * scale), int(image.height * scale)),
+        Image.Resampling.LANCZOS,
+    )
+
+
+def _ocr_result_score(text: str) -> float:
+    if not text.strip():
+        return 0.0
+    lines = [line for line in text.splitlines() if line.strip()]
+    return sum(_line_quality(line) for line in lines) + _real_word_count(text) * 2.0
 
 
 def _tesseract_config(psm: str | None = None) -> str:
@@ -451,23 +493,39 @@ def _tesseract_config(psm: str | None = None) -> str:
 
 def _run_ocr_on_image(image: Image.Image, src_lang: str) -> str:
     lang = _tesseract_lang(src_lang)
-    prepared = _preprocess_for_ocr(image)
-    configs = [_tesseract_config("11"), _tesseract_config("6")]
+    prepared_variants = [
+        _preprocess_for_ocr(image),
+        _preprocess_for_ocr_screen(image),
+    ]
+    psms = ("6", "3", "11")
 
     best = ""
     best_score = 0.0
-    for config in configs:
-        try:
-            raw = pytesseract.image_to_string(prepared, lang=lang, config=config)
-        except pytesseract.TesseractError:
-            if lang == "eng":
-                raise
-            raw = pytesseract.image_to_string(prepared, lang="eng", config=config)
-        cleaned = clean_ocr_text(raw)
-        score = sum(_line_quality(line) for line in cleaned.splitlines())
-        if score > best_score:
-            best_score = score
-            best = cleaned
+    for prepared in prepared_variants:
+        for psm in psms:
+            config = _tesseract_config(psm)
+            try:
+                raw = pytesseract.image_to_string(prepared, lang=lang, config=config)
+            except pytesseract.TesseractError:
+                if lang == "eng":
+                    continue
+                try:
+                    raw = pytesseract.image_to_string(
+                        prepared, lang="eng", config=config
+                    )
+                except pytesseract.TesseractError:
+                    continue
+            cleaned = clean_ocr_text(raw)
+            score = _ocr_result_score(cleaned)
+            if score > best_score:
+                best_score = score
+                best = cleaned
+
+    if not best:
+        prepared = _preprocess_for_ocr(image)
+        config = _tesseract_config("6")
+        raw = pytesseract.image_to_string(prepared, lang=lang, config=config)
+        best = clean_ocr_text(raw)
 
     return best
 
