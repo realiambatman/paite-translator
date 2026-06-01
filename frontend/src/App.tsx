@@ -81,6 +81,7 @@ export default function App() {
   );
   const abortRef = useRef<AbortController | null>(null);
   const outputRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
 
   const languages = status?.languages ?? FALLBACK_LANGUAGES;
   const maxTokens = status?.limits?.max_tokens ?? DEFAULT_MAX_TOKENS;
@@ -144,6 +145,11 @@ export default function App() {
     const timer = window.setInterval(refreshStatus, 5000);
     return () => window.clearInterval(timer);
   }, [refreshStatus]);
+
+  useEffect(() => {
+    if (!error) return;
+    errorRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [error]);
 
   useEffect(() => {
     const wakeServer = () => {
@@ -503,6 +509,16 @@ export default function App() {
             PDFs: delete unwanted parts in the box first.
           </p>
 
+          {error && (
+            <div
+              ref={errorRef}
+              role="alert"
+              className="border-b border-zomi-red/25 bg-zomi-red/5 px-4 py-3 text-sm text-zomi-red-dark"
+            >
+              {error}
+            </div>
+          )}
+
           {fileStatus && (
             <p className="border-b border-stone-300/40 bg-zomi-paper/60 px-4 py-2 text-xs text-zomi-muted">
               {fileStatus}
@@ -644,12 +660,6 @@ export default function App() {
             </section>
           </div>
         </div>
-
-        {error && (
-          <p className="mt-4 rounded-xl border border-zomi-red/20 bg-zomi-red/5 px-4 py-3 text-sm text-zomi-red-dark">
-            {error}
-          </p>
-        )}
 
         <section className="mt-6">
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-zomi-muted">
