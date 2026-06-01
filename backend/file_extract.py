@@ -31,8 +31,12 @@ MIN_MEANINGFUL_RATIO = float(os.environ.get("MIN_MEANINGFUL_RATIO", "0.5"))
 MIN_AVG_LINE_QUALITY = float(os.environ.get("MIN_AVG_LINE_QUALITY", "0.52"))
 OCR_PROBE_MAX_DIM = int(os.environ.get("OCR_PROBE_MAX_DIM", "900"))
 OCR_PROBE_MIN_CONF = int(os.environ.get("OCR_PROBE_MIN_CONF", "45"))
-OCR_PROBE_MIN_WORDS = int(os.environ.get("OCR_PROBE_MIN_WORDS", "1"))
+OCR_PROBE_MIN_WORDS = int(os.environ.get("OCR_PROBE_MIN_WORDS", "2"))
 OCR_PROBE_MIN_WORD_LEN = int(os.environ.get("OCR_PROBE_MIN_WORD_LEN", "2"))
+OCR_PROBE_MIN_LONG_WORDS = int(os.environ.get("OCR_PROBE_MIN_LONG_WORDS", "1"))
+OCR_PROBE_MIN_TOTAL_CONF = int(os.environ.get("OCR_PROBE_MIN_TOTAL_CONF", "100"))
+OCR_NOISE_SHORT_WORD_RATIO = float(os.environ.get("OCR_NOISE_SHORT_WORD_RATIO", "0.65"))
+OCR_NOISE_MIN_REAL_WORDS = int(os.environ.get("OCR_NOISE_MIN_REAL_WORDS", "2"))
 OCR_PROBE_MIN_MATCH_SCORE = float(os.environ.get("OCR_PROBE_MIN_MATCH_SCORE", "80"))
 OCR_PROBE_LANG_MARGIN = float(os.environ.get("OCR_PROBE_LANG_MARGIN", "1.4"))
 PROBE_TESSERACT_LANGS = ("eng", "hin", "ben", "mya")
@@ -107,6 +111,44 @@ def _word_has_letters(word: str) -> bool:
     return any(unicodedata.category(char).startswith("L") for char in word)
 
 
+def _word_has_vowel(word: str) -> bool:
+    return bool(re.search(r"[aeiouAEIOU]", word))
+
+
+def _real_word_count(text: str) -> int:
+    return sum(
+        1
+        for word in re.findall(r"\b[^\W_]+\b", text, flags=re.UNICODE)
+        if len(word) >= 4 and _word_has_letters(word) and _word_has_vowel(word)
+    )
+
+
+def _looks_like_ocr_noise(text: str) -> bool:
+    words = re.findall(r"\b[^\W_]+\b", text, flags=re.UNICODE)
+    if len(words) < 2:
+        return True
+
+    short_words = sum(1 for word in words if len(word) <= 3)
+    if short_words / len(words) >= OCR_NOISE_SHORT_WORD_RATIO:
+        return True
+
+    if _real_word_count(text) < OCR_NOISE_MIN_REAL_WORDS:
+        return True
+
+    avg_len = sum(len(word) for word in words) / len(words)
+    if avg_len < 3.8 and _real_word_count(text) < 3:
+        return True
+
+    return False
+
+
+def _no_text_in_image_error() -> ValueError:
+    return ValueError(
+        "This image does not appear to contain readable text. "
+        "Use a clear photo of printed text, or crop tightly around the words."
+    )
+
+
 def _count_words(text: str) -> int:
     return len(
         [
@@ -145,6 +187,9 @@ def _validate_extracted_text(text: str, *, from_ocr: bool) -> str:
         )
 
     if from_ocr:
+        if _looks_like_ocr_noise(normalized):
+            raise _no_text_in_image_error()
+
         lines = [line for line in normalized.splitlines() if line.strip()]
         if not lines:
             raise ValueError(
@@ -344,7 +389,7 @@ def _image_likely_has_text(image: Image.Image, src_lang: str) -> bool:
         )
     except pytesseract.TesseractError:
         if lang == "eng":
-            return True
+            return False
         try:
             data = pytesseract.image_to_data(
                 preview,
@@ -353,9 +398,11 @@ def _image_likely_has_text(image: Image.Image, src_lang: str) -> bool:
                 output_type=pytesseract.Output.DICT,
             )
         except pytesseract.TesseractError:
-            return True
+            return False
 
     confident_words = 0
+    long_words = 0
+    total_conf = 0
     for index, word in enumerate(data["text"]):
         cleaned = word.strip()
         if len(cleaned) < OCR_PROBE_MIN_WORD_LEN:
@@ -369,10 +416,15 @@ def _image_likely_has_text(image: Image.Image, src_lang: str) -> bool:
         if confidence < OCR_PROBE_MIN_CONF:
             continue
         confident_words += 1
-        if confident_words >= OCR_PROBE_MIN_WORDS:
-            return True
+        total_conf += confidence
+        if len(cleaned) >= 4:
+            long_words += 1
 
-    return False
+    return (
+        confident_words >= OCR_PROBE_MIN_WORDS
+        and long_words >= OCR_PROBE_MIN_LONG_WORDS
+        and total_conf >= OCR_PROBE_MIN_TOTAL_CONF
+    )
 
 
 def _preprocess_for_ocr(image: Image.Image) -> Image.Image:
@@ -422,12 +474,12 @@ def _run_ocr_on_image(image: Image.Image, src_lang: str) -> str:
 
 def _ocr_image(image: Image.Image, src_lang: str) -> str:
     if not _image_likely_has_text(image, src_lang):
-        raise ValueError(
-            "This image does not appear to contain readable text. "
-            "Use a clear photo of printed text, or crop tightly around the words."
-        )
+        raise _no_text_in_image_error()
     _check_image_language_for_ocr(image, src_lang)
-    return _run_ocr_on_image(image, src_lang)
+    result = _run_ocr_on_image(image, src_lang)
+    if not result.strip() or _looks_like_ocr_noise(result):
+        raise _no_text_in_image_error()
+    return result
 
 
 def _extract_txt(content: bytes) -> str:
