@@ -440,8 +440,8 @@ export default function App() {
               Zomi Translator
             </h1>
             <p className="mt-1 max-w-lg text-sm text-zomi-muted">
-              Free Zomi translator for Paite — English ↔ Paite plus Mizo,
-              Meitei, Burmese, Hindi, and more regional and world languages.
+              Zomi translator for Paite — English ↔ Paite plus Mizo, Meitei,
+              Burmese, Hindi, and more regional and world languages.
             </p>
           </div>
         </header>
