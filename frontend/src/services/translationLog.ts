@@ -14,6 +14,7 @@ export async function saveTranslationLog(input: {
   pivotEnglish?: string | null;
   storageUrl?: string | null;
   source?: string | null;
+  filename?: string | null;
 }): Promise<void> {
   const db = getFirebaseDb();
   if (!db) return;
@@ -28,6 +29,7 @@ export async function saveTranslationLog(input: {
       pivot_english: input.pivotEnglish ?? null,
       storage_url: input.storageUrl ?? null,
       source: input.source ?? null,
+      filename: input.filename ?? null,
       created_at: serverTimestamp(),
     });
   } catch (err) {

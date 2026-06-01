@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   extractFile,
   fetchStatus,
@@ -20,7 +20,8 @@ import { FALLBACK_LANGUAGES } from "./languages";
 import { LanguageSelect } from "./components/LanguageSelect";
 import { CameraCapture } from "./components/CameraCapture";
 import { ImageCropModal } from "./components/ImageCropModal";
-import { isImageFile } from "./utils/cropImage";
+import { UploadFileModal } from "./components/UploadFileModal";
+import { isImageFile, isSupportedUploadFile } from "./utils/cropImage";
 
 const HF_LANGS = new Set<LangCode>(["eng_Latn", "pai_Latn"]);
 
@@ -65,14 +66,21 @@ export default function App() {
   );
   const [cropFile, setCropFile] = useState<File | null>(null);
   const [cropSource, setCropSource] = useState<"upload" | "camera">("upload");
+  const [lastExtractMeta, setLastExtractMeta] = useState<{
+    storageUrl?: string;
+    source?: string;
+    filename?: string;
+  } | null>(null);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragDepthRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [firestoreCharsUsed, setFirestoreCharsUsed] = useState<number | null>(
     null,
   );
   const abortRef = useRef<AbortController | null>(null);
   const outputRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const languages = status?.languages ?? FALLBACK_LANGUAGES;
   const maxTokens = status?.limits?.max_tokens ?? DEFAULT_MAX_TOKENS;
@@ -195,6 +203,9 @@ export default function App() {
             tgtText: result.translation,
             route: result.route,
             pivotEnglish: result.pivotEnglish,
+            storageUrl: lastExtractMeta?.storageUrl,
+            source: lastExtractMeta?.source,
+            filename: lastExtractMeta?.filename,
           });
         })();
       }
@@ -236,6 +247,7 @@ export default function App() {
     setIsExtracting(true);
     setError(null);
     setLanguageWarning(null);
+    setLastExtractMeta(null);
     setInputText("");
     setOutputText("");
     setFileStatus(
@@ -247,6 +259,11 @@ export default function App() {
     try {
       const extracted = await extractFile(file, srcLang, source, controller.signal);
       setInputText(extracted.text);
+      setLastExtractMeta({
+        storageUrl: extracted.storage_url,
+        source: extracted.source,
+        filename: extracted.filename,
+      });
 
       const methodLabel =
         source === "camera"
@@ -300,11 +317,11 @@ export default function App() {
     }
     void extractFileContent(file, source);
   };
+  const handleIncomingFileRef = useRef(handleIncomingFile);
+  handleIncomingFileRef.current = handleIncomingFile;
 
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (file) handleIncomingFile(file, "upload");
+  const handleUploadFile = (file: File) => {
+    handleIncomingFile(file, "upload");
   };
 
   const handleCameraCapture = (file: File) => {
@@ -333,6 +350,61 @@ export default function App() {
     (!googleRequired || googleEnabled);
   const canUploadFile =
     !isTranslating && !isExtracting && modelReady;
+
+  useEffect(() => {
+    const hasFiles = (transfer: DataTransfer) =>
+      [...transfer.types].includes("Files");
+
+    const onDragEnter = (event: DragEvent) => {
+      event.preventDefault();
+      if (!hasFiles(event.dataTransfer!)) return;
+      dragDepthRef.current += 1;
+      setIsDragging(true);
+    };
+
+    const onDragLeave = (event: DragEvent) => {
+      event.preventDefault();
+      dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+      if (dragDepthRef.current === 0) {
+        setIsDragging(false);
+      }
+    };
+
+    const onDragOver = (event: DragEvent) => {
+      event.preventDefault();
+    };
+
+    const onDrop = (event: DragEvent) => {
+      event.preventDefault();
+      dragDepthRef.current = 0;
+      setIsDragging(false);
+
+      if (!canUploadFile) return;
+
+      const file = event.dataTransfer?.files?.[0];
+      if (!file) return;
+
+      if (!isSupportedUploadFile(file)) {
+        setError("Unsupported file. Use .txt, .pdf, .docx, or an image.");
+        return;
+      }
+
+      handleIncomingFileRef.current(file, "upload");
+    };
+
+    window.addEventListener("dragenter", onDragEnter);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("drop", onDrop);
+
+    return () => {
+      window.removeEventListener("dragenter", onDragEnter);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [canUploadFile]);
+
   const barColor = inputAnalysis.overLimit
     ? "bg-zomi-red"
     : inputAnalysis.charRatio >= 0.85
@@ -392,18 +464,9 @@ export default function App() {
               disabled={isTranslating || isExtracting}
             />
 
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept={FILE_ACCEPT}
-              onChange={handleFileChange}
-              className="hidden"
-              disabled={!canUploadFile}
-            />
-
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => setUploadOpen(true)}
               disabled={!canUploadFile}
               className="rounded-full border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm text-zomi-ink transition hover:border-zomi-red/30 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -644,6 +707,13 @@ export default function App() {
         </footer>
       </div>
 
+      <UploadFileModal
+        open={uploadOpen}
+        accept={FILE_ACCEPT}
+        onClose={() => setUploadOpen(false)}
+        onFile={handleUploadFile}
+      />
+
       <CameraCapture
         open={cameraOpen}
         onClose={() => setCameraOpen(false)}
@@ -656,6 +726,17 @@ export default function App() {
         onClose={() => setCropFile(null)}
         onConfirm={handleCropConfirm}
       />
+
+      {isDragging && canUploadFile && (
+        <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-zomi-red/10 backdrop-blur-[1px]">
+          <div className="rounded-2xl border-2 border-dashed border-zomi-red bg-white/95 px-8 py-6 text-center shadow-lg">
+            <p className="font-medium text-zomi-ink">Drop file to extract text</p>
+            <p className="mt-1 text-xs text-zomi-muted">
+              .txt, .pdf, .docx, or image
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

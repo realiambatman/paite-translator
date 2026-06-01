@@ -5,6 +5,11 @@ export function isImageFile(file: File): boolean {
   return /\.(jpe?g|png|webp|gif|bmp)$/i.test(file.name);
 }
 
+export function isSupportedUploadFile(file: File): boolean {
+  if (isImageFile(file)) return true;
+  return /\.(txt|pdf|docx)$/i.test(file.name);
+}
+
 export async function cropImageToFile(
   image: HTMLImageElement,
   crop: PixelCrop,
