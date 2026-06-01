@@ -71,6 +71,231 @@ def fix_bullet_points(translated_text: str) -> str:
     return translated_text
 
 
+TIMESTAMP_LINE = re.compile(
+    r"^(\s*)(\d{1,2}:\d{2}(?::\d{2})?(?:\.\d{1,3})?)\s+(.*)$",
+)
+LEADING_TIMESTAMP_JUNK = re.compile(
+    r"^(\s*)((?:Dak|dak|DAK)\s+)?(\d{1,2}:\d{2}(?::\d{2})?(?:\.\d{1,3})?)\s*",
+)
+
+
+def fix_timestamps(source_text: str, translated_text: str) -> str:
+    """Restore subtitle-style timestamps from the source on each translated line."""
+    if not source_text.strip() or not translated_text.strip():
+        return translated_text
+
+    src_lines = source_text.split("\n")
+    tgt_lines = translated_text.split("\n")
+    fixed_lines: list[str] = []
+
+    for index, src_line in enumerate(src_lines):
+        tgt_line = tgt_lines[index] if index < len(tgt_lines) else ""
+        src_match = TIMESTAMP_LINE.match(src_line)
+
+        if not src_match or not src_line.strip():
+            fixed_lines.append(tgt_line)
+            continue
+
+        indent, timestamp, _ = src_match.groups()
+        body = LEADING_TIMESTAMP_JUNK.sub(r"\1", tgt_line, count=1)
+        body = re.sub(
+            r"^(\s*)(\d{1,2}:\d{2}(?::\d{2})?(?:\.\d{1,3})?)\s*",
+            r"\1",
+            body,
+            count=1,
+        )
+        body = body.lstrip()
+        fixed_lines.append(f"{indent}{timestamp} {body}" if body else f"{indent}{timestamp}")
+
+    if len(tgt_lines) > len(src_lines):
+        fixed_lines.extend(tgt_lines[len(src_lines) :])
+
+    return "\n".join(fixed_lines)
+
+
+def fix_paite_formatting(source_text: str, translated_text: str) -> str:
+    translated_text = fix_bullet_points(translated_text)
+    return fix_timestamps(source_text, translated_text)
+
+
+def _ends_sentence(text: str) -> bool:
+    stripped = text.rstrip()
+    if not stripped:
+        return False
+    while stripped and stripped[-1] in "\"'”’)]}":
+        stripped = stripped[:-1].rstrip()
+    return bool(stripped) and stripped[-1] in ".!?"
+
+
+def _line_body(line: str) -> tuple[str | None, str | None, str | None, str]:
+    """Return (indent, timestamp, body) for timestamp lines, else plain body."""
+    match = TIMESTAMP_LINE.match(line)
+    if match:
+        indent, timestamp, body = match.groups()
+        return indent, timestamp, body, "timestamp"
+    return None, None, line.strip(), "plain"
+
+
+def _is_multiline_sentence_document(text: str) -> bool:
+    lines = [line for line in text.split("\n") if line.strip()]
+    if len(lines) < 2:
+        return False
+
+    timestamp_lines = sum(1 for line in lines if TIMESTAMP_LINE.match(line))
+    if timestamp_lines >= 2:
+        return True
+
+    non_sentence_lines = sum(1 for line in lines if not _ends_sentence(_line_body(line)[2] or ""))
+    return non_sentence_lines >= 2 and non_sentence_lines / len(lines) >= 0.4
+
+
+def _redistribute_by_word_counts(source_fragments: list[str], translated: str) -> list[str]:
+    if len(source_fragments) == 1:
+        return [translated.strip()]
+
+    src_counts = [max(len(fragment.split()), 1 if fragment.strip() else 0) for fragment in source_fragments]
+    tgt_words = translated.split()
+    if not tgt_words:
+        return [""] * len(source_fragments)
+
+    total_src = sum(src_counts)
+    if total_src == 0:
+        return [translated.strip()] + [""] * (len(source_fragments) - 1)
+
+    result: list[str] = []
+    word_idx = 0
+    remaining_lines = len(source_fragments)
+
+    for index, count in enumerate(src_counts):
+        remaining_lines -= 1
+        if index == len(source_fragments) - 1:
+            chunk = tgt_words[word_idx:]
+        else:
+            take = round((count / total_src) * len(tgt_words))
+            take = max(take, 1 if count > 0 else 0)
+            reserve = max(remaining_lines, 0)
+            take = min(take, max(len(tgt_words) - word_idx - reserve, 0))
+            chunk = tgt_words[word_idx : word_idx + take]
+            word_idx += take
+        result.append(" ".join(chunk).strip())
+
+    return result
+
+
+def _split_multiline_document(text: str) -> tuple[list[str], list[int], dict]:
+    raw_lines = text.split("\n")
+    units: list[str] = []
+    unit_line_counts: list[int] = []
+    groups: list[dict] = []
+
+    current_indices: list[int] = []
+    current_fragments: list[str] = []
+    current_meta: list[tuple[str | None, str | None]] = []
+
+    def flush_group() -> None:
+        nonlocal current_indices, current_fragments, current_meta
+        if not current_fragments:
+            return
+
+        merged = " ".join(
+            fragment.strip() for fragment in current_fragments if fragment.strip()
+        )
+        if not merged:
+            current_indices = []
+            current_fragments = []
+            current_meta = []
+            return
+
+        groups.append(
+            {
+                "kind": "merged",
+                "unit_index": len(units),
+                "line_indices": current_indices.copy(),
+                "fragments": current_fragments.copy(),
+                "meta": current_meta.copy(),
+            }
+        )
+        units.append(merged)
+        unit_line_counts.append(len(current_indices))
+        current_indices = []
+        current_fragments = []
+        current_meta = []
+
+    for line_index, line in enumerate(raw_lines):
+        if not line.strip():
+            flush_group()
+            continue
+
+        indent, timestamp, body, _kind = _line_body(line)
+        current_indices.append(line_index)
+        current_fragments.append(body or "")
+        current_meta.append((indent, timestamp))
+
+        if _ends_sentence(body or "") or _ends_sentence(" ".join(current_fragments)):
+            flush_group()
+
+    flush_group()
+
+    layout = {
+        "line_count": len(raw_lines),
+        "groups": groups,
+    }
+    return units, unit_line_counts, layout
+
+
+def _format_multiline_output_line(
+    source_line: str,
+    translated_body: str,
+    meta: tuple[str | None, str | None],
+) -> str:
+    indent, timestamp = meta
+    if timestamp:
+        prefix = f"{indent or ''}{timestamp}"
+        return f"{prefix} {translated_body}".rstrip() if translated_body else prefix
+
+    match = TIMESTAMP_LINE.match(source_line)
+    if match:
+        line_indent, line_timestamp, _ = match.groups()
+        prefix = f"{line_indent}{line_timestamp}"
+        return f"{prefix} {translated_body}".rstrip() if translated_body else prefix
+
+    if translated_body:
+        return translated_body
+    return source_line.strip()
+
+
+def _reconstruct_multiline_document(
+    source_text: str,
+    layout: dict,
+    translated_units: list[str],
+) -> str:
+    raw_lines = source_text.split("\n")
+    output = list(raw_lines)
+
+    for group in layout["groups"]:
+        unit_index = group["unit_index"]
+        translated = translated_units[unit_index] if unit_index < len(translated_units) else ""
+
+        if group["kind"] == "plain":
+            output[group["line_index"]] = translated
+            continue
+
+        redistributed = _redistribute_by_word_counts(group["fragments"], translated)
+        for line_index, fragment, meta in zip(
+            group["line_indices"],
+            redistributed,
+            group["meta"],
+            strict=False,
+        ):
+            output[line_index] = _format_multiline_output_line(
+                raw_lines[line_index],
+                fragment,
+                meta,
+            )
+
+    return "\n".join(output)
+
+
 class TranslationEngine:
     def __init__(self):
         self.inference_backend = INFERENCE_BACKEND
@@ -201,7 +426,10 @@ class TranslationEngine:
         return GPU_BATCH_SIZE if self.device == "cuda" else CPU_BATCH_SIZE
 
     @staticmethod
-    def _split_document(text: str) -> tuple[list[str], list[int]]:
+    def _split_document(text: str) -> tuple[list[str], list[int], dict | None]:
+        if _is_multiline_sentence_document(text):
+            return _split_multiline_document(text)
+
         paragraphs = text.split("\n")
         all_sentences: list[str] = []
         para_structures: list[int] = []
@@ -214,7 +442,7 @@ class TranslationEngine:
                 all_sentences.extend(sentences)
                 para_structures.append(len(sentences))
 
-        return all_sentences, para_structures
+        return all_sentences, para_structures, None
 
     @staticmethod
     def _group_document_sentences(
@@ -368,32 +596,71 @@ class TranslationEngine:
             raise ValueError(f"Google Translate does not support: {src_lang} -> {tgt_lang}")
         return google_translate_text(text, src_code, tgt_code)
 
-    def _translate_hf(self, text: str, src_lang: str, tgt_lang: str) -> str:
-        all_sentences, para_structures = self._split_document(text)
+    def _translate_hf(
+        self,
+        text: str,
+        src_lang: str,
+        tgt_lang: str,
+        timestamp_source: str | None = None,
+    ) -> str:
+        ts_source = timestamp_source if timestamp_source is not None else text
+        all_sentences, line_counts, multiline_layout = self._split_document(text)
         if not all_sentences:
             return ""
 
-        groups = self._group_document_sentences(
-            all_sentences, para_structures, SENTENCE_GROUP_SIZE
-        )
-        unit_texts = [text for text, _ in groups]
-        translated_groups = self._translate_units(unit_texts, src_lang, tgt_lang)
-        result = self._reconstruct_from_groups(
-            para_structures, translated_groups, SENTENCE_GROUP_SIZE
-        )
+        if multiline_layout:
+            translated_units = self._translate_units(all_sentences, src_lang, tgt_lang)
+            result = _reconstruct_multiline_document(text, multiline_layout, translated_units)
+        else:
+            groups = self._group_document_sentences(
+                all_sentences, line_counts, SENTENCE_GROUP_SIZE
+            )
+            unit_texts = [unit for unit, _ in groups]
+            translated_groups = self._translate_units(unit_texts, src_lang, tgt_lang)
+            result = self._reconstruct_from_groups(
+                line_counts, translated_groups, SENTENCE_GROUP_SIZE
+            )
         if tgt_lang == PAITE:
-            result = fix_bullet_points(result)
+            result = fix_paite_formatting(ts_source, result)
         return result
 
-    def _translate_stream_hf(self, text: str, src_lang: str, tgt_lang: str):
-        all_sentences, para_structures = self._split_document(text)
-        total = len(all_sentences)
+    def _translate_stream_hf(
+        self,
+        text: str,
+        src_lang: str,
+        tgt_lang: str,
+        timestamp_source: str | None = None,
+    ):
+        ts_source = timestamp_source if timestamp_source is not None else text
+        all_sentences, line_counts, multiline_layout = self._split_document(text)
+        total = sum(line_counts) if multiline_layout else len(all_sentences)
         if not all_sentences:
             yield {"translation": "", "current": 0, "total": 0}
             return
 
+        if multiline_layout:
+            translated_units: list[str] = []
+            lines_done = 0
+
+            for unit_text, unit_line_count in zip(all_sentences, line_counts, strict=False):
+                translated_units.append(
+                    self._translate_one_unit(unit_text, src_lang, tgt_lang)
+                )
+                lines_done += unit_line_count
+                partial = _reconstruct_multiline_document(
+                    text, multiline_layout, translated_units
+                )
+                if tgt_lang == PAITE:
+                    partial = fix_paite_formatting(ts_source, partial)
+                yield {
+                    "translation": partial,
+                    "current": lines_done,
+                    "total": total,
+                }
+            return
+
         groups = self._group_document_sentences(
-            all_sentences, para_structures, SENTENCE_GROUP_SIZE
+            all_sentences, line_counts, SENTENCE_GROUP_SIZE
         )
         translated_groups: list[str] = []
         sentences_done = 0
@@ -404,10 +671,10 @@ class TranslationEngine:
             )
             sentences_done += sentence_count
             partial = self._reconstruct_from_groups(
-                para_structures, translated_groups, SENTENCE_GROUP_SIZE
+                line_counts, translated_groups, SENTENCE_GROUP_SIZE
             )
             if tgt_lang == PAITE:
-                partial = fix_bullet_points(partial)
+                partial = fix_paite_formatting(ts_source, partial)
             yield {
                 "translation": partial,
                 "current": sentences_done,
@@ -425,7 +692,7 @@ class TranslationEngine:
             return self._translate_google(text, src_lang, tgt_lang), None, route
         if route == "to_paite":
             english = self._translate_google(text, src_lang, ENGLISH)
-            result = self._translate_hf(english, ENGLISH, PAITE)
+            result = self._translate_hf(english, ENGLISH, PAITE, timestamp_source=text)
             return result, english, route
         if route == "from_paite":
             english = self._translate_hf(text, PAITE, ENGLISH)
@@ -497,7 +764,9 @@ class TranslationEngine:
             )
         elif route == "to_paite":
             pivot_english = self._translate_google(text, src_lang, ENGLISH)
-            for chunk in self._translate_stream_hf(pivot_english, ENGLISH, PAITE):
+            for chunk in self._translate_stream_hf(
+                pivot_english, ENGLISH, PAITE, timestamp_source=text
+            ):
                 if chunk["current"] == chunk["total"] and chunk["total"] > 0:
                     yield self._with_meta(chunk, route, pivot_english, text)
                 else:
