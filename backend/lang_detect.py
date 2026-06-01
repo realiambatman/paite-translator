@@ -118,6 +118,68 @@ def _langdetect_guess(text: str) -> str | None:
     return LANGDETECT_TO_CODE.get(detected)
 
 
+def check_ocr_latin_garbage(text: str, src_lang: str) -> LanguageCheck | None:
+    """Detect Latin gibberish from OCR with the wrong script/language selected."""
+    expected_scripts = LANG_SCRIPTS.get(src_lang, {"latin"})
+    if "latin" not in expected_scripts:
+        return None
+
+    stripped = text.strip()
+    if len(stripped) < 8:
+        return None
+
+    scores = _script_scores(stripped)
+    non_latin = {
+        script: count
+        for script, count in scores.items()
+        if script != "latin" and script in expected_scripts
+    }
+    if non_latin:
+        return None
+
+    latin_count = scores.get("latin", 0)
+    if latin_count < 6:
+        return None
+
+    words = re.findall(r"\b[^\W_]+\b", stripped, flags=re.UNICODE)
+    if len(words) < 2:
+        return None
+
+    suspicious = 0
+    for word in words:
+        if re.search(r"[a-z][A-Z]|[A-Z][a-z][A-Z]", word):
+            suspicious += 1
+        elif len(word) <= 5 and word.isupper() and word.isalpha():
+            suspicious += 1
+        elif len(word) <= 3 and word.isalpha():
+            suspicious += 1
+        elif word.isalpha() and len(word) >= 4:
+            vowels = len(re.findall(r"[aeiouAEIOU]", word))
+            if vowels == 0 or vowels / len(word) < 0.15:
+                suspicious += 1
+
+    if suspicious < max(2, len(words) * 0.35):
+        return None
+
+    src_label = language_label(src_lang)
+    suggestions = [
+        {"code": code, "label": language_label(code)}
+        for code in ("mni_Beng", "hin_Deva", "ben_Beng", "eng_Latn")
+        if code != src_lang and code in LANGUAGES
+    ][:3]
+
+    return LanguageCheck(
+        matches_source=False,
+        detected_script="latin",
+        message=(
+            f"Could not read this image as {src_label}. "
+            "The text may be in another script (Meitei, Hindi, Bengali, etc.). "
+            "Select the matching source language and try again."
+        ),
+        suggested_languages=suggestions,
+    )
+
+
 def check_language_match(text: str, src_lang: str) -> LanguageCheck:
     stripped = text.strip()
     if len(stripped) < 12:

@@ -11,6 +11,13 @@ from dataclasses import dataclass
 import fitz
 import pytesseract
 from docx import Document
+from lang_detect import (
+    LANG_SCRIPTS,
+    SCRIPT_LABELS,
+    SCRIPT_TO_LANGS,
+    check_ocr_latin_garbage,
+)
+from languages import language_label
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 MAX_FILE_BYTES = int(os.environ.get("MAX_FILE_BYTES", str(10 * 1024 * 1024)))
@@ -18,6 +25,26 @@ MIN_PDF_TEXT_CHARS = int(os.environ.get("MIN_PDF_TEXT_CHARS", "32"))
 PDF_OCR_DPI = int(os.environ.get("PDF_OCR_DPI", "200"))
 TESSERACT_PSM = os.environ.get("TESSERACT_PSM", "11")
 OCR_MIN_LINE_QUALITY = float(os.environ.get("OCR_MIN_LINE_QUALITY", "0.45"))
+MIN_EXTRACTED_CHARS = int(os.environ.get("MIN_EXTRACTED_CHARS", "4"))
+MIN_EXTRACTED_WORDS = int(os.environ.get("MIN_EXTRACTED_WORDS", "1"))
+MIN_MEANINGFUL_RATIO = float(os.environ.get("MIN_MEANINGFUL_RATIO", "0.5"))
+MIN_AVG_LINE_QUALITY = float(os.environ.get("MIN_AVG_LINE_QUALITY", "0.52"))
+OCR_PROBE_MAX_DIM = int(os.environ.get("OCR_PROBE_MAX_DIM", "900"))
+OCR_PROBE_MIN_CONF = int(os.environ.get("OCR_PROBE_MIN_CONF", "45"))
+OCR_PROBE_MIN_WORDS = int(os.environ.get("OCR_PROBE_MIN_WORDS", "1"))
+OCR_PROBE_MIN_WORD_LEN = int(os.environ.get("OCR_PROBE_MIN_WORD_LEN", "2"))
+OCR_PROBE_MIN_MATCH_SCORE = float(os.environ.get("OCR_PROBE_MIN_MATCH_SCORE", "80"))
+OCR_PROBE_LANG_MARGIN = float(os.environ.get("OCR_PROBE_LANG_MARGIN", "1.4"))
+PROBE_TESSERACT_LANGS = ("eng", "hin", "ben", "mya")
+
+TESSERACT_PRIMARY_SCRIPT = {
+    "eng": "latin",
+    "hin": "devanagari",
+    "ben": "bengali",
+    "mya": "myanmar",
+    "rus": "cyrillic",
+    "chi_sim": "han",
+}
 
 SUPPORTED_EXTENSIONS = {
     ".txt",
@@ -76,6 +103,74 @@ def _tesseract_lang(src_lang: str) -> str:
     return TESSERACT_LANG.get(src_lang, "eng")
 
 
+def _word_has_letters(word: str) -> bool:
+    return any(unicodedata.category(char).startswith("L") for char in word)
+
+
+def _count_words(text: str) -> int:
+    return len(
+        [
+            word
+            for word in re.findall(r"\b[^\W_]+\b", text, flags=re.UNICODE)
+            if len(word) >= 2
+        ]
+    )
+
+
+def _meaningful_ratio(text: str) -> float:
+    if not text:
+        return 0.0
+    meaningful = sum(1 for char in text if _is_meaningful_char(char))
+    return meaningful / len(text)
+
+
+def _validate_extracted_text(text: str, *, from_ocr: bool) -> str:
+    normalized = _normalize_text(text)
+    if len(normalized) < MIN_EXTRACTED_CHARS:
+        raise ValueError(
+            "No readable text found in this file. "
+            "Try a document with text or a clear photo of printed words."
+        )
+
+    if _count_words(normalized) < MIN_EXTRACTED_WORDS:
+        raise ValueError(
+            "No readable text found in this file. "
+            "Try a document with text or a clear photo of printed words."
+        )
+
+    if _meaningful_ratio(normalized) < MIN_MEANINGFUL_RATIO:
+        raise ValueError(
+            "No readable text found in this file. "
+            "Try a document with text or a clear photo of printed words."
+        )
+
+    if from_ocr:
+        lines = [line for line in normalized.splitlines() if line.strip()]
+        if not lines:
+            raise ValueError(
+                "No readable text found in this file. "
+                "OCR works best on clear printed text."
+            )
+        avg_quality = sum(_line_quality(line) for line in lines) / len(lines)
+        if avg_quality < MIN_AVG_LINE_QUALITY:
+            raise ValueError(
+                "No readable text found in this file. "
+                "OCR works best on clear printed text."
+            )
+        letter_words = sum(
+            1
+            for word in re.findall(r"\b[^\W_]+\b", normalized, flags=re.UNICODE)
+            if _word_has_letters(word)
+        )
+        if letter_words < MIN_EXTRACTED_WORDS:
+            raise ValueError(
+                "No readable text found in this file. "
+                "OCR works best on clear printed text."
+            )
+
+    return normalized
+
+
 def _is_meaningful_char(char: str) -> bool:
     if char.isspace():
         return True
@@ -118,6 +213,168 @@ def clean_ocr_text(text: str) -> str:
     return "\n".join(lines)
 
 
+def _downscale_for_probe(image: Image.Image, max_dim: int = OCR_PROBE_MAX_DIM) -> Image.Image:
+    width, height = image.size
+    longest = max(width, height)
+    if longest <= max_dim:
+        return image
+    scale = max_dim / longest
+    return image.resize(
+        (int(width * scale), int(height * scale)),
+        Image.Resampling.LANCZOS,
+    )
+
+
+def _preprocess_for_probe(image: Image.Image) -> Image.Image:
+    gray = ImageOps.grayscale(image)
+    return ImageOps.autocontrast(gray, cutoff=2)
+
+
+def _word_script_weight(word: str, tess_lang: str) -> float:
+    latin = len(re.findall(r"[A-Za-z]", word))
+    deva = len(re.findall(r"[\u0900-\u097F]", word))
+    beng = len(re.findall(r"[\u0980-\u09FF]", word))
+    myan = len(re.findall(r"[\u1000-\u109F]", word))
+
+    if tess_lang == "eng":
+        if deva or beng or myan:
+            return 0.05
+        return 1.0 if latin else 0.0
+    if tess_lang == "hin":
+        return 2.5 if deva else (0.15 if latin else 0.0)
+    if tess_lang == "ben":
+        return 2.5 if beng else (0.15 if latin else 0.0)
+    if tess_lang == "mya":
+        return 2.5 if myan else 0.1
+    return 1.0 if latin else 0.0
+
+
+def _probe_ocr_lang_score(prepared: Image.Image, tess_lang: str) -> float:
+    config = _tesseract_config("11")
+    try:
+        data = pytesseract.image_to_data(
+            prepared,
+            lang=tess_lang,
+            config=config,
+            output_type=pytesseract.Output.DICT,
+        )
+    except pytesseract.TesseractError:
+        return 0.0
+
+    score = 0.0
+    for index, word in enumerate(data["text"]):
+        cleaned = word.strip()
+        if len(cleaned) < OCR_PROBE_MIN_WORD_LEN:
+            continue
+        try:
+            confidence = int(float(data["conf"][index]))
+        except (TypeError, ValueError):
+            continue
+        if confidence < OCR_PROBE_MIN_CONF:
+            continue
+
+        script_weight = _word_script_weight(cleaned, tess_lang)
+        if script_weight <= 0:
+            continue
+        score += confidence * script_weight
+
+    return score
+
+
+def _check_image_language_for_ocr(image: Image.Image, src_lang: str) -> None:
+    expected_scripts = LANG_SCRIPTS.get(src_lang, {"latin"})
+    expected_tess = _tesseract_lang(src_lang)
+    prepared = _preprocess_for_probe(_downscale_for_probe(image))
+
+    scores = {
+        lang: _probe_ocr_lang_score(prepared, lang) for lang in PROBE_TESSERACT_LANGS
+    }
+    ranked = sorted(
+        ((lang, score) for lang, score in scores.items() if score > 0),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    if not ranked:
+        return
+
+    best_lang, best_score = ranked[0]
+    expected_score = scores.get(expected_tess, 0.0)
+    best_script = TESSERACT_PRIMARY_SCRIPT.get(best_lang, "latin")
+
+    if best_script in expected_scripts:
+        return
+
+    if best_score < OCR_PROBE_MIN_MATCH_SCORE:
+        return
+
+    margin = best_score / max(expected_score, 1.0)
+    if margin < OCR_PROBE_LANG_MARGIN:
+        return
+
+    src_label = language_label(src_lang)
+    script_label = SCRIPT_LABELS.get(best_script, best_script)
+    suggestion_codes = [
+        code for code in SCRIPT_TO_LANGS.get(best_script, []) if code != src_lang
+    ]
+    if suggestion_codes:
+        names = ", ".join(language_label(code) for code in suggestion_codes[:3])
+        message = (
+            f"This image looks like {script_label} text ({names}), "
+            f"not {src_label}. Select the matching source language and try again."
+        )
+    else:
+        message = (
+            f"This image looks like {script_label} text, "
+            f"not {src_label}. Select the matching source language and try again."
+        )
+    raise ValueError(message)
+
+
+def _image_likely_has_text(image: Image.Image, src_lang: str) -> bool:
+    preview = _preprocess_for_probe(_downscale_for_probe(image))
+    lang = _tesseract_lang(src_lang)
+    config = _tesseract_config("11")
+
+    try:
+        data = pytesseract.image_to_data(
+            preview,
+            lang=lang,
+            config=config,
+            output_type=pytesseract.Output.DICT,
+        )
+    except pytesseract.TesseractError:
+        if lang == "eng":
+            return True
+        try:
+            data = pytesseract.image_to_data(
+                preview,
+                lang="eng",
+                config=config,
+                output_type=pytesseract.Output.DICT,
+            )
+        except pytesseract.TesseractError:
+            return True
+
+    confident_words = 0
+    for index, word in enumerate(data["text"]):
+        cleaned = word.strip()
+        if len(cleaned) < OCR_PROBE_MIN_WORD_LEN:
+            continue
+        if not _word_has_letters(cleaned):
+            continue
+        try:
+            confidence = int(float(data["conf"][index]))
+        except (TypeError, ValueError):
+            continue
+        if confidence < OCR_PROBE_MIN_CONF:
+            continue
+        confident_words += 1
+        if confident_words >= OCR_PROBE_MIN_WORDS:
+            return True
+
+    return False
+
+
 def _preprocess_for_ocr(image: Image.Image) -> Image.Image:
     gray = ImageOps.grayscale(image)
     gray = ImageOps.autocontrast(gray, cutoff=2)
@@ -140,7 +397,7 @@ def _tesseract_config(psm: str | None = None) -> str:
     return f"--oem 3 --psm {mode} -c preserve_interword_spaces=1"
 
 
-def _ocr_image(image: Image.Image, src_lang: str) -> str:
+def _run_ocr_on_image(image: Image.Image, src_lang: str) -> str:
     lang = _tesseract_lang(src_lang)
     prepared = _preprocess_for_ocr(image)
     configs = [_tesseract_config("11"), _tesseract_config("6")]
@@ -161,6 +418,16 @@ def _ocr_image(image: Image.Image, src_lang: str) -> str:
             best = cleaned
 
     return best
+
+
+def _ocr_image(image: Image.Image, src_lang: str) -> str:
+    if not _image_likely_has_text(image, src_lang):
+        raise ValueError(
+            "This image does not appear to contain readable text. "
+            "Use a clear photo of printed text, or crop tightly around the words."
+        )
+    _check_image_language_for_ocr(image, src_lang)
+    return _run_ocr_on_image(image, src_lang)
 
 
 def _extract_txt(content: bytes) -> str:
@@ -198,7 +465,16 @@ def _extract_pdf(content: bytes, src_lang: str) -> tuple[str, str]:
 
         pixmap = page.get_pixmap(dpi=PDF_OCR_DPI)
         image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
-        page_texts.append(_ocr_image(image, src_lang))
+        if not _image_likely_has_text(image, src_lang):
+            continue
+        try:
+            _check_image_language_for_ocr(image, src_lang)
+        except ValueError:
+            continue
+        page_text = _run_ocr_on_image(image, src_lang)
+        if not page_text.strip():
+            continue
+        page_texts.append(page_text)
         ocr_pages += 1
 
     document.close()
@@ -235,10 +511,12 @@ def extract_text(content: bytes, filename: str, src_lang: str) -> ExtractResult:
         text = _extract_image(content, src_lang)
         method = "ocr"
 
-    normalized = _normalize_text(text)
-    if not normalized:
-        raise ValueError(
-            "No readable text found in this file. OCR works best on clear printed text."
-        )
+    from_ocr = method in ("ocr", "pdf_ocr")
+    validated = _validate_extracted_text(text, from_ocr=from_ocr)
 
-    return ExtractResult(text=normalized, method=method, filename=filename)
+    if from_ocr:
+        garbage = check_ocr_latin_garbage(validated, src_lang)
+        if garbage and garbage.message:
+            raise ValueError(garbage.message)
+
+    return ExtractResult(text=validated, method=method, filename=filename)
