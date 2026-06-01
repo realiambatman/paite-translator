@@ -6,7 +6,11 @@ import {
   type ModelStatus,
   translateTextStream,
 } from "./services/api";
-import { analyzeInput, DEFAULT_MAX_CHARS, DEFAULT_MAX_TOKENS } from "./utils/textLimits";
+import {
+  analyzeInput,
+  DEFAULT_MAX_CHARS,
+  DEFAULT_MAX_TOKENS,
+} from "./utils/textLimits";
 import { saveTranslationLog } from "./services/translationLog";
 import { fetchGoogleQuota, incrementGoogleQuota } from "./services/googleQuota";
 import { FALLBACK_LANGUAGES } from "./languages";
@@ -231,14 +235,14 @@ export default function App() {
         <header className="mb-5 border-b border-stone-300/40 pb-4">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zomi-gold">
-              Paite · Zomi Language
+              Zomi Language · Paite
             </p>
             <h1 className="font-serif text-2xl font-bold tracking-tight text-zomi-ink md:text-3xl">
-              Zomi Paite Translator
+              Zomi Translator
             </h1>
             <p className="mt-1 max-w-lg text-sm text-zomi-muted">
-              Translate Paite with English, Mizo, Meitei, Burmese, Hindi, and
-              more regional and world languages.
+              Free Zomi translator for Paite — English ↔ Paite plus Mizo,
+              Meitei, Burmese, Hindi, and more regional and world languages.
             </p>
           </div>
         </header>
@@ -418,6 +422,19 @@ export default function App() {
               </button>
             ))}
           </div>
+        </section>
+
+        <section className="mt-8 rounded-xl border border-stone-300/40 bg-zomi-paper/40 px-4 py-4 text-sm text-zomi-muted">
+          <h2 className="mb-2 font-serif text-base font-semibold text-zomi-ink">
+            About this Zomi translator
+          </h2>
+          <p>
+            This free Zomi translator helps you translate between English and
+            Paite, the most widely used Zomi language. Paite is spoken across
+            Manipur, Mizoram, Assam, and the Zomi diaspora worldwide. Use this
+            Zomi language translator and Paite translator for everyday phrases,
+            learning, and connecting with Zomi-speaking communities.
+          </p>
         </section>
 
         <footer className="mt-8 border-t border-stone-300/40 pt-4 text-center text-xs text-zomi-muted">
