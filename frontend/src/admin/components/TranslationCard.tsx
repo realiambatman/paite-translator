@@ -1,11 +1,18 @@
 import { useState } from "react";
-import type { AdminTranslation } from "../api";
+import type { AdminTranslation, OnExisting, ReviewOneResult } from "../api";
 import { formatFull, formatTime, parseDate, timeAgo } from "../format";
 
 interface Props {
   item: AdminTranslation;
   langLabel: (code: string | null) => string;
   onOpenImage: (src: string, title: string | null) => void;
+  /** "provider/model" ids with a saved key; empty hides the AI review button. */
+  reviewers: string[];
+  onReview: (
+    item: AdminTranslation,
+    reviewer: string,
+    onExisting: OnExisting,
+  ) => Promise<ReviewOneResult>;
 }
 
 const SOURCE_STYLES: Record<string, string> = {
@@ -46,9 +53,32 @@ async function copyText(text: string) {
   }
 }
 
-export function TranslationCard({ item, langLabel, onOpenImage }: Props) {
+export function TranslationCard({ item, langLabel, onOpenImage, reviewers, onReview }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewer, setReviewer] = useState<string>(reviewers[0] ?? "");
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewResult, setReviewResult] = useState<ReviewOneResult | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
+  const chosen = reviewer || reviewers[0] || "";
+  const alreadyBy = item.llm_reviews?.find((r) => r.reviewer === chosen) ?? null;
+
+  const runReview = async (onExisting: OnExisting) => {
+    if (!chosen) return;
+    setReviewing(true);
+    setReviewError(null);
+    setReviewResult(null);
+    try {
+      setReviewResult(await onReview(item, chosen, onExisting));
+      setReviewOpen(false);
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : "Review failed.");
+    } finally {
+      setReviewing(false);
+    }
+  };
   const date = parseDate(item.created_at);
   const source = item.source ?? "text";
   const hasImage = item.is_image && item.file_url && !imageFailed;
@@ -217,6 +247,44 @@ export function TranslationCard({ item, langLabel, onOpenImage }: Props) {
             </div>
           )}
 
+          {reviewResult && (
+            <p
+              className={`mt-2 rounded-lg px-3 py-1.5 text-xs ${
+                reviewResult.skipped
+                  ? "bg-stone-200/60 text-stone-700"
+                  : reviewResult.verdict === "fix"
+                    ? "bg-zomi-red/5 text-zomi-red-dark"
+                    : reviewResult.verdict === "ok"
+                      ? "bg-emerald-50 text-emerald-800"
+                      : "bg-amber-50 text-amber-900"
+              }`}
+            >
+              {reviewResult.skipped ? (
+                <>Already reviewed by {reviewResult.reviewer}; nothing changed.</>
+              ) : reviewResult.verdict === "fix" ? (
+                <>
+                  <span className="font-semibold">{reviewResult.reviewer} suggests a fix</span>
+                  {reviewResult.version && reviewResult.version > 1 ? ` (v${reviewResult.version})` : ""}
+                  : <span className="font-serif">{reviewResult.corrected}</span>
+                  {reviewResult.note ? ` (${reviewResult.note})` : ""}. Added to Corrections.
+                </>
+              ) : reviewResult.verdict === "ok" ? (
+                <>
+                  <span className="font-semibold">{reviewResult.reviewer}:</span> looks fine
+                  {reviewResult.note ? ` — ${reviewResult.note}` : ""}.
+                </>
+              ) : (
+                <>
+                  <span className="font-semibold">{reviewResult.reviewer}:</span> unsure
+                  {reviewResult.note ? ` — ${reviewResult.note}` : ""}.
+                </>
+              )}
+            </p>
+          )}
+          {reviewError && (
+            <p className="mt-2 rounded-lg bg-zomi-red/5 px-3 py-1.5 text-xs text-zomi-red-dark">{reviewError}</p>
+          )}
+
           <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px]">
             <button
               type="button"
@@ -225,6 +293,79 @@ export function TranslationCard({ item, langLabel, onOpenImage }: Props) {
             >
               {expanded ? "Show less" : "Show details"}
             </button>
+            {reviewers.length > 0 && !reviewOpen && (
+              <button
+                type="button"
+                onClick={() => setReviewOpen(true)}
+                disabled={reviewing}
+                className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-violet-800 transition hover:bg-violet-100 disabled:opacity-60"
+              >
+                {reviewing ? (
+                  <span className="stream-spinner inline-block h-3 w-3 rounded-full border-2 border-violet-200 border-t-violet-700" aria-hidden />
+                ) : (
+                  <svg viewBox="0 0 20 20" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path d="M10 3v3m0 8v3m7-7h-3M6 10H3m11.5-4.5-2 2m-5 5-2 2m9 0-2-2m-5-5-2-2" strokeLinecap="round" />
+                  </svg>
+                )}
+                {reviewing ? "Reviewing…" : "AI review"}
+              </button>
+            )}
+            {reviewOpen && (
+              <span className="inline-flex flex-wrap items-center gap-1.5 rounded-xl border border-violet-200 bg-violet-50/70 px-2 py-1">
+                {reviewers.length > 1 ? (
+                  <select
+                    value={chosen}
+                    onChange={(e) => setReviewer(e.target.value)}
+                    disabled={reviewing}
+                    className="rounded-full border border-violet-200 bg-white px-2 py-0.5 text-[11px] text-zomi-ink outline-none"
+                  >
+                    {reviewers.map((r) => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="text-violet-900">{chosen}</span>
+                )}
+                {alreadyBy ? (
+                  <>
+                    <span className="text-violet-900">already reviewed this →</span>
+                    <button
+                      type="button"
+                      disabled={reviewing}
+                      onClick={() => runReview("keep")}
+                      className="rounded-full bg-violet-700 px-2.5 py-0.5 font-semibold text-white hover:bg-violet-800 disabled:opacity-60"
+                    >
+                      Review again as v{(alreadyBy.version ?? 1) + 1}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={reviewing}
+                      onClick={() => runReview("replace")}
+                      className="rounded-full border border-violet-300 bg-white px-2.5 py-0.5 text-violet-900 hover:bg-violet-100 disabled:opacity-60"
+                    >
+                      Replace old
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={reviewing}
+                    onClick={() => runReview("keep")}
+                    className="rounded-full bg-violet-700 px-2.5 py-0.5 font-semibold text-white hover:bg-violet-800 disabled:opacity-60"
+                  >
+                    {reviewing ? "Reviewing…" : "Review now"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={reviewing}
+                  onClick={() => setReviewOpen(false)}
+                  className="text-violet-900 hover:underline"
+                >
+                  Cancel
+                </button>
+              </span>
+            )}
             {hasFile && (
               <a
                 href={item.file_url!}

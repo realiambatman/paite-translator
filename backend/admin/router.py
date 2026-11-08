@@ -576,6 +576,33 @@ def admin_review_run(body: ReviewRunIn):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+class ReviewOneIn(BaseModel):
+    reviewer: str | None = None
+    on_existing: str = Field(default="keep", pattern="^(skip|replace|keep)$")
+
+
+@router.post("/translations/{doc_id}/review", dependencies=[Depends(require_admin)])
+def admin_review_one(doc_id: str, body: ReviewOneIn):
+    """Review one translation immediately and return the refreshed entry."""
+    from .review import review_one
+
+    ref = _firestore_or_503()
+    try:
+        result = review_one(doc_id, body.reviewer, body.on_existing)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except llm_provider.LLMError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Review failed: {exc}") from exc
+
+    return {"result": result, "item": _serialize(ref.document(doc_id).get())}
+
+
 @router.post("/review/cancel", dependencies=[Depends(require_admin)])
 def admin_review_cancel():
     from .review import job

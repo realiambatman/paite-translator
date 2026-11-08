@@ -5,8 +5,11 @@ import {
   AdminAuthError,
   downloadCsv,
   fetchAdminStatus,
+  fetchLlmSettings,
   fetchStats,
   fetchTranslations,
+  reviewTranslation,
+  type OnExisting,
   loadToken,
   storeToken,
   verifyToken,
@@ -96,6 +99,31 @@ export default function AdminApp() {
   );
   const [exporting, setExporting] = useState(false);
   const [tab, setTab] = useState<Tab>(() => tabFromHash());
+  const [reviewers, setReviewers] = useState<string[]>([]);
+
+  const loadReviewers = useCallback(async (activeToken: string) => {
+    try {
+      const settings = await fetchLlmSettings(activeToken);
+      const list = Object.entries(settings.providers)
+        .filter(([name]) => settings.keys[name]?.configured)
+        .flatMap(([name, meta]) => meta.models.map((m) => `${name}/${m}`));
+      // Put the active model first so it is the default in each row.
+      const active = settings.provider && settings.model ? `${settings.provider}/${settings.model}` : null;
+      setReviewers(active && list.includes(active) ? [active, ...list.filter((r) => r !== active)] : list);
+    } catch {
+      setReviewers([]);
+    }
+  }, []);
+
+  const handleRowReview = useCallback(
+    async (item: AdminTranslation, reviewer: string, onExisting: OnExisting) => {
+      const response = await reviewTranslation(token, item.id, { reviewer, on_existing: onExisting });
+      setItems((prev) => prev.map((t) => (t.id === item.id ? response.item : t)));
+      if (response.result.verdict === "fix" || response.result.replaced) void loadStatsRef.current(token);
+      return response.result;
+    },
+    [token],
+  );
 
   const switchTab = (next: Tab) => {
     setTab(next);
@@ -225,6 +253,12 @@ export default function AdminApp() {
     void loadStats(token);
     void loadPage(token, null, order);
   }, [authed, token, order, loadStats, loadPage]);
+
+  // Refresh the per-row reviewer list whenever the admin returns to the log,
+  // since keys may have been added in the AI review tab meanwhile.
+  useEffect(() => {
+    if (authed && token && tab === "translations") void loadReviewers(token);
+  }, [authed, token, tab, loadReviewers]);
 
   const handleLogin = async (password: string) => {
     setAuthBusy(true);
@@ -461,6 +495,8 @@ export default function AdminApp() {
                   item={item}
                   langLabel={langLabel}
                   onOpenImage={(src, title) => setLightbox({ src, title })}
+                  reviewers={reviewers}
+                  onReview={handleRowReview}
                 />
               ))}
             </section>

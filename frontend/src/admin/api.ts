@@ -391,6 +391,27 @@ export function startReview(
   return adminSend("/api/admin/review/run", token, "POST", body);
 }
 
+export interface ReviewOneResult {
+  skipped?: boolean;
+  verdict?: "ok" | "fix" | "unsure" | string;
+  confidence?: number;
+  note?: string;
+  corrected?: string | null;
+  correction_id?: string | null;
+  version?: number;
+  reviewer: string;
+  replaced?: number;
+  errors?: string[];
+}
+
+export function reviewTranslation(
+  token: string,
+  id: string,
+  body: { reviewer?: string | null; on_existing?: OnExisting },
+): Promise<{ result: ReviewOneResult; item: AdminTranslation }> {
+  return adminSend(`/api/admin/translations/${encodeURIComponent(id)}/review`, token, "POST", body);
+}
+
 export function precheckReview(
   token: string,
   body: { limit: number; tgt_lang?: string | null; reviewers?: string[] },

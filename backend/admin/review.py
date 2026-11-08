@@ -238,121 +238,204 @@ class ReviewJob:
             )
 
     def _review_batch(self, config, batch: list[dict], translations, corrections) -> None:
-        from google.cloud import firestore
-
-        items = []
-        for item in batch:
-            entry = {
-                "id": item["id"],
-                "source_language": _lang_label(item.get("src_lang")),
-                "target_language": _lang_label(item.get("tgt_lang")),
-                "source_text": (item.get("src_text") or "")[:1500],
-                "translation": (item.get("tgt_text") or "")[:2000],
-            }
-            if item.get("pivot_english"):
-                entry["english_pivot"] = item["pivot_english"][:1500]
-            items.append(entry)
-
-        import json
-
-        user = "Review these translations:\n\n" + json.dumps(items, ensure_ascii=False, indent=1)
-
         try:
-            reply = llm_provider.complete(SYSTEM, user, max_tokens=6000, config=config)
-            verdicts = llm_provider.extract_json(reply)
-            if not isinstance(verdicts, list):
-                raise llm_provider.LLMError("Model reply was not a JSON array.")
+            by_id = ask_model(config, batch)
         except Exception as exc:
             errors = self.snapshot().get("errors", [])
             self._update(errors=[*errors, f"batch failed: {exc}"][-20:])
             return
 
-        by_id = {str(v.get("id")): v for v in verdicts if isinstance(v, dict)}
-        reviewer = llm_provider.reviewer_id(config)
-        stamp = {
-            "at": firestore.SERVER_TIMESTAMP,
-            "provider": config.provider,
-            "model": config.model,
-            "reviewer": reviewer,
-        }
-        reviewer_key = llm_provider.reviewer_key(reviewer)
-
         for item in batch:
-            verdict = by_id.get(item["id"]) or {}
-            kind = str(verdict.get("verdict") or "unsure").lower()
-            previous_version = int(item.get("_previous_version") or 0)
-            version = 1 if item.get("_replace") else previous_version + 1
-            if item.get("_replace"):
-                self._delete_previous(corrections, item["id"], reviewer)
-            if kind not in ("ok", "fix", "unsure"):
-                kind = "unsure"
-            corrected = (verdict.get("corrected") or "").strip() if kind == "fix" else ""
-            if kind == "fix" and (not corrected or corrected == (item.get("tgt_text") or "").strip()):
-                kind = "unsure"
-
-            try:
-                confidence = float(verdict.get("confidence") or 0)
-            except (TypeError, ValueError):
-                confidence = 0.0
-            note = str(verdict.get("note") or "")[:500]
-
-            if kind == "fix":
-                corrections.add(
-                    {
-                        "kind": "correction",
-                        "status": "pending",
-                        "origin": "llm",
-                        "reviewer": reviewer,
-                        "confidence": confidence,
-                        "translation_id": item["id"],
-                        "src_lang": item.get("src_lang"),
-                        "tgt_lang": item.get("tgt_lang"),
-                        "src_text": item.get("src_text") or "",
-                        "model_text": item.get("tgt_text") or "",
-                        "corrected_text": corrected[:1500],
-                        "comment": note or None,
-                        "version": version,
-                        "route": item.get("route"),
-                        "pivot_english": item.get("pivot_english"),
-                        "rating": None,
-                        "created_at": firestore.SERVER_TIMESTAMP,
-                    }
-                )
-
-            try:
-                review = {**stamp, "verdict": kind, "confidence": confidence, "note": note, "version": version}
-                translations.document(item["id"]).set(
-                    {"llm_review": review, "llm_reviews": {reviewer_key: review}},
-                    merge=True,
-                )
-            except Exception as exc:
+            result = record_verdict(
+                config,
+                item,
+                by_id.get(item["id"]) or {},
+                translations,
+                corrections,
+                replace=bool(item.get("_replace")),
+                previous_version=int(item.get("_previous_version") or 0),
+            )
+            for err in result.get("errors", []):
                 errors = self.snapshot().get("errors", [])
-                self._update(errors=[*errors, f"stamp failed for {item['id']}: {exc}"][-20:])
-
+                self._update(errors=[*errors, err][-20:])
+            if result.get("replaced"):
+                self._update(replaced=self.snapshot().get("replaced", 0) + result["replaced"])
             snap = self.snapshot()
+            kind = result["verdict"]
             self._update(reviewed=snap["reviewed"] + 1, **{kind: snap[kind] + 1})
 
         time.sleep(0.2)  # be gentle with provider rate limits
 
-    def _delete_previous(self, corrections, translation_id: str, reviewer: str) -> None:
-        """Remove this model's earlier suggestions for one translation (replace mode)."""
-        from google.cloud.firestore_v1 import FieldFilter
-
-        try:
-            old = (
-                corrections.where(filter=FieldFilter("translation_id", "==", translation_id))
-                .where(filter=FieldFilter("reviewer", "==", reviewer))
-                .stream()
-            )
-            removed = 0
-            for doc in old:
-                doc.reference.delete()
-                removed += 1
-            if removed:
-                self._update(replaced=self.snapshot().get("replaced", 0) + removed)
-        except Exception as exc:
-            errors = self.snapshot().get("errors", [])
-            self._update(errors=[*errors, f"could not replace old suggestion for {translation_id}: {exc}"][-20:])
-
 
 job = ReviewJob()
+
+
+
+# --------------------------------------------------------------------------- shared helpers
+
+
+def ask_model(config: llm_provider.LLMConfig, batch: list[dict]) -> dict[str, dict]:
+    """Send a batch of translations to the model; returns verdicts keyed by id."""
+    import json
+
+    items = []
+    for item in batch:
+        entry = {
+            "id": item["id"],
+            "source_language": _lang_label(item.get("src_lang")),
+            "target_language": _lang_label(item.get("tgt_lang")),
+            "source_text": (item.get("src_text") or "")[:1500],
+            "translation": (item.get("tgt_text") or "")[:2000],
+        }
+        if item.get("pivot_english"):
+            entry["english_pivot"] = item["pivot_english"][:1500]
+        items.append(entry)
+
+    user = "Review these translations:\n\n" + json.dumps(items, ensure_ascii=False, indent=1)
+    reply = llm_provider.complete(SYSTEM, user, max_tokens=6000, config=config)
+    verdicts = llm_provider.extract_json(reply)
+    if not isinstance(verdicts, list):
+        raise llm_provider.LLMError("Model reply was not a JSON array.")
+    return {str(v.get("id")): v for v in verdicts if isinstance(v, dict)}
+
+
+def delete_previous(corrections, translation_id: str, reviewer: str) -> int:
+    """Remove this model's earlier suggestions for one translation (replace mode)."""
+    from google.cloud.firestore_v1 import FieldFilter
+
+    old = (
+        corrections.where(filter=FieldFilter("translation_id", "==", translation_id))
+        .where(filter=FieldFilter("reviewer", "==", reviewer))
+        .stream()
+    )
+    removed = 0
+    for doc in old:
+        doc.reference.delete()
+        removed += 1
+    return removed
+
+
+def record_verdict(
+    config: llm_provider.LLMConfig,
+    item: dict,
+    verdict: dict,
+    translations,
+    corrections,
+    *,
+    replace: bool = False,
+    previous_version: int = 0,
+) -> dict:
+    """Normalise one verdict, file a pending correction if it is a fix, and stamp
+    the translation. Returns a summary the caller can report."""
+    from google.cloud import firestore
+
+    reviewer = llm_provider.reviewer_id(config)
+    key = llm_provider.reviewer_key(reviewer)
+    errors: list[str] = []
+    replaced = 0
+
+    version = 1 if replace else previous_version + 1
+    if replace:
+        try:
+            replaced = delete_previous(corrections, item["id"], reviewer)
+        except Exception as exc:
+            errors.append(f"could not replace old suggestion for {item['id']}: {exc}")
+
+    kind = str(verdict.get("verdict") or "unsure").lower()
+    if kind not in ("ok", "fix", "unsure"):
+        kind = "unsure"
+    corrected = (verdict.get("corrected") or "").strip() if kind == "fix" else ""
+    if kind == "fix" and (not corrected or corrected == (item.get("tgt_text") or "").strip()):
+        kind = "unsure"
+    try:
+        confidence = float(verdict.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    note = str(verdict.get("note") or "")[:500]
+
+    correction_id = None
+    if kind == "fix":
+        _, ref = corrections.add(
+            {
+                "kind": "correction",
+                "status": "pending",
+                "origin": "llm",
+                "reviewer": reviewer,
+                "confidence": confidence,
+                "translation_id": item["id"],
+                "src_lang": item.get("src_lang"),
+                "tgt_lang": item.get("tgt_lang"),
+                "src_text": item.get("src_text") or "",
+                "model_text": item.get("tgt_text") or "",
+                "corrected_text": corrected[:1500],
+                "comment": note or None,
+                "version": version,
+                "route": item.get("route"),
+                "pivot_english": item.get("pivot_english"),
+                "rating": None,
+                "created_at": firestore.SERVER_TIMESTAMP,
+            }
+        )
+        correction_id = ref.id
+
+    review = {
+        "at": firestore.SERVER_TIMESTAMP,
+        "provider": config.provider,
+        "model": config.model,
+        "reviewer": reviewer,
+        "verdict": kind,
+        "confidence": confidence,
+        "note": note,
+        "version": version,
+    }
+    try:
+        translations.document(item["id"]).set(
+            {"llm_review": review, "llm_reviews": {key: review}},
+            merge=True,
+        )
+    except Exception as exc:
+        errors.append(f"stamp failed for {item['id']}: {exc}")
+
+    return {
+        "verdict": kind,
+        "confidence": confidence,
+        "note": note,
+        "corrected": corrected if kind == "fix" else None,
+        "correction_id": correction_id,
+        "version": version,
+        "reviewer": reviewer,
+        "replaced": replaced,
+        "errors": errors,
+    }
+
+
+def review_one(doc_id: str, reviewer: str | None, on_existing: str = "keep") -> dict:
+    """Review a single translation right now (used by the per-row button)."""
+    configs = ReviewJob.resolve_reviewers([reviewer] if reviewer else None)
+    config = configs[0]
+    db = fs.get_client()
+    translations = db.collection(fs.TRANSLATIONS_COLLECTION)
+    corrections = db.collection(CORRECTIONS_COLLECTION)
+
+    snapshot = translations.document(doc_id).get()
+    if not snapshot.exists:
+        raise LookupError("Translation not found.")
+    item = {"id": doc_id, **(snapshot.to_dict() or {})}
+    if not (item.get("src_text") or "").strip() or not (item.get("tgt_text") or "").strip():
+        raise ValueError("This entry has no text to review.")
+
+    key = llm_provider.reviewer_key(llm_provider.reviewer_id(config))
+    previous = (item.get("llm_reviews") or {}).get(key)
+    if previous and on_existing == "skip":
+        return {"skipped": True, "reviewer": llm_provider.reviewer_id(config), "previous": previous}
+
+    by_id = ask_model(config, [item])
+    return record_verdict(
+        config,
+        item,
+        by_id.get(doc_id) or {},
+        translations,
+        corrections,
+        replace=bool(previous) and on_existing == "replace",
+        previous_version=int(previous.get("version") or 1) if previous else 0,
+    )
