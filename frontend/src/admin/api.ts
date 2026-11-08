@@ -24,6 +24,8 @@ export interface AdminTranslation {
   is_image: boolean;
   llm_review: LlmReview | null;
   llm_reviews: LlmReview[];
+  /** Other beam-search candidates the model considered, if any were logged. */
+  alternatives: string[];
 }
 
 export interface LlmReview {
@@ -356,6 +358,13 @@ export function updateLlmSettings(
   patch: { provider?: string; model?: string; api_keys?: Record<string, string> },
 ): Promise<LlmSettings> {
   return adminSend("/api/admin/llm", token, "PUT", patch);
+}
+
+export function fetchLlmKey(
+  token: string,
+  provider: string,
+): Promise<{ provider: string; api_key: string; source: "admin" | "env" }> {
+  return adminJson(`/api/admin/llm/key/${encodeURIComponent(provider)}`, token);
 }
 
 export function testLlm(

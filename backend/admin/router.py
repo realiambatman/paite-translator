@@ -108,6 +108,7 @@ def _serialize(doc) -> dict:
         "storage_key": storage_key,
         "file_url": view_url,
         "is_image": bool(storage_url) and _is_image(filename, storage_url),
+        "alternatives": [a for a in (data.get("alternatives") or []) if isinstance(a, str)][:5],
         "llm_review": _llm_review(data.get("llm_review")),
         "llm_reviews": [
             r for r in (_llm_review(v) for v in (data.get("llm_reviews") or {}).values()) if r
@@ -478,6 +479,18 @@ def admin_update_llm(body: LLMSettingsIn):
         return llm_provider.public_settings()
     except llm_provider.LLMError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/llm/key/{provider}", dependencies=[Depends(require_admin)])
+def admin_llm_key(provider: str):
+    """Reveal the saved key for a provider so the admin can copy it back out."""
+    if provider not in llm_provider.PROVIDERS:
+        raise HTTPException(status_code=404, detail="Unknown provider.")
+    key = llm_provider.key_for(provider)
+    if not key:
+        raise HTTPException(status_code=404, detail="No key saved for this provider.")
+    stored = (llm_provider.load_settings().get("api_keys") or {}).get(provider)
+    return {"provider": provider, "api_key": key, "source": "admin" if stored else "env"}
 
 
 @router.post("/llm/test", dependencies=[Depends(require_admin)])

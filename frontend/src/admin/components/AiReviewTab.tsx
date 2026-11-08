@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Language } from "../../services/api";
 import {
   cancelReview,
+  fetchLlmKey,
   fetchLlmSettings,
   fetchReviewStatus,
   precheckReview,
@@ -27,6 +28,8 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
   const [provider, setProvider] = useState<string>("anthropic");
   const [model, setModel] = useState<string>("");
   const [keyDraft, setKeyDraft] = useState<string>("");
+  const [keyVisible, setKeyVisible] = useState(false);
+  const [keyNotice, setKeyNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
@@ -85,6 +88,8 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
   const changeProvider = (next: string) => {
     setProvider(next);
     setKeyDraft("");
+    setKeyVisible(false);
+    setKeyNotice(null);
     setTestResult(null);
     if (settings) {
       setModel(
@@ -92,6 +97,44 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
           ? settings.model
           : (settings.providers[next]?.default_model ?? ""),
       );
+    }
+  };
+
+  const loadSavedKey = async (): Promise<string | null> => {
+    if (keyDraft.trim()) return keyDraft.trim();
+    try {
+      const result = await fetchLlmKey(token, provider);
+      return result.api_key;
+    } catch (err) {
+      if (!onAuthError(err)) {
+        setKeyNotice(err instanceof Error ? err.message : "Could not read the saved key.");
+      }
+      return null;
+    }
+  };
+
+  const revealKey = async () => {
+    if (keyVisible) {
+      setKeyVisible(false);
+      if (!keyNotice?.startsWith("Copied")) setKeyNotice(null);
+      return;
+    }
+    const key = await loadSavedKey();
+    if (key == null) return;
+    setKeyDraft(key);
+    setKeyVisible(true);
+    setKeyNotice(null);
+  };
+
+  const copyKey = async () => {
+    const key = await loadSavedKey();
+    if (key == null) return;
+    try {
+      await navigator.clipboard.writeText(key);
+      setKeyNotice("Copied to clipboard.");
+      window.setTimeout(() => setKeyNotice(null), 2000);
+    } catch {
+      setKeyNotice("Clipboard blocked by the browser. Use the eye to reveal and copy by hand.");
     }
   };
 
@@ -260,14 +303,50 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
           </label>
           <label className="text-[11px] text-zomi-muted">
             API key {keyInfo?.configured ? "(leave blank to keep the saved one)" : ""}
-            <input
-              type="password"
-              value={keyDraft}
-              onChange={(e) => setKeyDraft(e.target.value)}
-              autoComplete="off"
-              placeholder={keyInfo?.configured ? `saved ${keyInfo.hint ?? ""}` : "paste key"}
-              className={`mt-1 block w-full ${inputClass}`}
-            />
+            <span className="mt-1 flex items-center gap-1">
+              <input
+                type={keyVisible ? "text" : "password"}
+                value={keyDraft}
+                onChange={(e) => setKeyDraft(e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={keyInfo?.configured ? `saved ${keyInfo.hint ?? ""}` : "paste key"}
+                className={`block min-w-0 flex-1 font-mono ${inputClass}`}
+              />
+              <button
+                type="button"
+                onClick={revealKey}
+                disabled={!keyInfo?.configured && !keyDraft}
+                title={keyVisible ? "Hide key" : "Show saved key"}
+                aria-label={keyVisible ? "Hide key" : "Show saved key"}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-stone-300/60 bg-white text-zomi-muted transition hover:text-zomi-ink disabled:opacity-40"
+              >
+                {keyVisible ? (
+                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
+                    <path d="M3 3l14 14M8.5 8.6A2.5 2.5 0 0 0 11.4 11.5M7 5.2A7.6 7.6 0 0 1 10 4.7c4 0 6.7 3.3 7.5 5.3-.3.8-1 1.9-2 2.9M4.3 7.3C3.3 8.3 2.8 9.3 2.5 10c.8 2 3.5 5.3 7.5 5.3 1.1 0 2.1-.2 3-.6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
+                    <path d="M2.5 10c.8-2 3.5-5.3 7.5-5.3s6.7 3.3 7.5 5.3c-.8 2-3.5 5.3-7.5 5.3S3.3 12 2.5 10z" strokeLinejoin="round" />
+                    <circle cx="10" cy="10" r="2.5" />
+                  </svg>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={copyKey}
+                disabled={!keyInfo?.configured && !keyDraft}
+                title="Copy key"
+                aria-label="Copy key"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-stone-300/60 bg-white text-zomi-muted transition hover:text-zomi-ink disabled:opacity-40"
+              >
+                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
+                  <rect x="7" y="7" width="9" height="9" rx="1.5" />
+                  <path d="M13 7V5.5A1.5 1.5 0 0 0 11.5 4h-6A1.5 1.5 0 0 0 4 5.5v6A1.5 1.5 0 0 0 5.5 13H7" strokeLinecap="round" />
+                </svg>
+              </button>
+            </span>
+            {keyNotice && <span className="mt-1 block text-[11px] text-zomi-ink">{keyNotice}</span>}
           </label>
           <div className="flex items-end gap-2">
             <button

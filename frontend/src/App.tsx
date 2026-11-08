@@ -242,19 +242,23 @@ export default function App() {
           result.route === "hf" &&
           !text.includes("\n") &&
           text.trim().length <= ALTERNATIVES_MAX_CHARS;
-        if (wantsAlternatives) {
-          fetchAlternatives(text, src, tgt, controller.signal)
-            .then((alts) => {
-              if (!controller.signal.aborted) setAlternatives(alts);
-            })
-            .catch(() => undefined);
-        }
+        const alternativesPromise: Promise<string[]> = wantsAlternatives
+          ? fetchAlternatives(text, src, tgt, controller.signal).catch(() => [])
+          : Promise.resolve([]);
+        void alternativesPromise.then((alts) => {
+          if (!controller.signal.aborted) setAlternatives(alts);
+        });
 
         void (async () => {
           if (result.googleCharsUsed && result.googleCharsUsed > 0) {
             await incrementGoogleQuota(result.googleCharsUsed);
             await refreshQuota();
           }
+          // Give the beam alternatives a few seconds so they are logged too.
+          const alts = await Promise.race([
+            alternativesPromise,
+            new Promise<string[]>((resolve) => window.setTimeout(() => resolve([]), 5000)),
+          ]);
           const id = await saveTranslationLog({
             srcLang: src,
             tgtLang: tgt,
@@ -265,6 +269,7 @@ export default function App() {
             storageUrl: lastExtractMeta?.storageUrl,
             source: lastExtractMeta?.source,
             filename: lastExtractMeta?.filename,
+            alternatives: alts,
           });
           if (id) {
             setLastResult((prev) =>
@@ -562,11 +567,12 @@ export default function App() {
   };
 
   const busy = isTranslating || isExtracting;
-  const modelState: { label: string; tone: string } = status?.error
-    ? { label: "Model error", tone: "bg-zomi-red" }
-    : modelReady
-      ? { label: "Paite model ready", tone: "bg-emerald-600" }
-      : { label: "Warming up the model", tone: "bg-zomi-gold" };
+  // Only speak up when something is wrong or not ready yet.
+  const modelState: { label: string; tone: string } | null = status?.error
+    ? { label: "The translation model failed to load. Try again in a minute.", tone: "text-zomi-red-dark" }
+    : status && !modelReady
+      ? { label: "Starting up the Paite model, this takes a moment after idle periods…", tone: "text-zomi-muted" }
+      : null;
 
   const barColor = inputAnalysis.overLimit
     ? "bg-zomi-red"
@@ -587,14 +593,11 @@ export default function App() {
               languages of the Northeast and beyond.
             </p>
           </div>
-          <div
-            className="inline-flex items-center gap-2 rounded-full border border-stone-300/60 bg-white/70 px-3 py-1 text-xs text-zomi-ink"
-            role="status"
-            aria-live="polite"
-          >
-            <span className={`h-2 w-2 rounded-full ${modelState.tone}`} aria-hidden />
-            {modelState.label}
-          </div>
+          {modelState && (
+            <p role="status" aria-live="polite" className={`text-sm ${modelState.tone}`}>
+              {modelState.label}
+            </p>
+          )}
         </header>
 
         <div className="zomi-puan h-[14px] rounded-sm" aria-hidden />

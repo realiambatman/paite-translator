@@ -157,6 +157,18 @@ export function TranslationCard({ item, langLabel, onOpenImage }: Props) {
                   </span>
                 </p>
               )}
+              {item.alternatives?.length > 0 && (
+                <div>
+                  <span className="font-semibold">Other candidates the model weighed:</span>
+                  <ul className="mt-1 space-y-0.5">
+                    {item.alternatives.map((alt) => (
+                      <li key={alt} className="font-serif text-sm text-zomi-ink">
+                        {alt}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <p>
                 <span className="font-semibold">Logged:</span>{" "}
                 {formatFull(date)}

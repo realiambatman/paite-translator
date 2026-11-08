@@ -15,6 +15,7 @@ export async function saveTranslationLog(input: {
   storageUrl?: string | null;
   source?: string | null;
   filename?: string | null;
+  alternatives?: string[] | null;
 }): Promise<string | null> {
   const db = getFirebaseDb();
   if (!db) return null;
@@ -30,6 +31,7 @@ export async function saveTranslationLog(input: {
       storage_url: input.storageUrl ?? null,
       source: input.source ?? null,
       filename: input.filename ?? null,
+      alternatives: (input.alternatives ?? []).slice(0, 5),
       created_at: serverTimestamp(),
     });
     return ref.id;
