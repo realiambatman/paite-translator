@@ -12,6 +12,37 @@ service cloud.firestore {
       allow read, update, delete: if false;
     }
 
+    // User feedback on translations: thumbs up/down and suggested corrections.
+    // Browser can only create; the admin panel reads and reviews server-side.
+    match /corrections/{docId} {
+      allow create: if request.resource.data.keys().hasAll([
+          'kind', 'src_lang', 'tgt_lang', 'src_text', 'model_text', 'status'
+        ])
+        && request.resource.data.kind in ['rating', 'correction']
+        && request.resource.data.status == 'pending'
+        && request.resource.data.src_text is string
+        && request.resource.data.src_text.size() <= 1000
+        && request.resource.data.model_text is string
+        && request.resource.data.model_text.size() <= 1500
+        && (!('corrected_text' in request.resource.data)
+            || request.resource.data.corrected_text == null
+            || (request.resource.data.corrected_text is string
+                && request.resource.data.corrected_text.size() <= 1500))
+        && (!('comment' in request.resource.data)
+            || request.resource.data.comment == null
+            || (request.resource.data.comment is string
+                && request.resource.data.comment.size() <= 500))
+        && (!('rating' in request.resource.data)
+            || request.resource.data.rating == null
+            || request.resource.data.rating in ['up', 'down']);
+      allow read, update, delete: if false;
+    }
+
+    // Glossary rules are managed only by the admin panel (service account).
+    match /glossary/{docId} {
+      allow read, write: if false;
+    }
+
     match /google_translate_quota/{dayId} {
       allow read: if true;
       allow create, update: if request.resource.data.date == dayId

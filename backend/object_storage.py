@@ -117,3 +117,47 @@ def upload_bytes(
         return None
 
     return StoredObject(key=key, url=_public_url(key), bucket=bucket)
+
+
+def key_from_url(url: str) -> str | None:
+    """Recover the object key from a public URL produced by _public_url()."""
+    if not url or not is_configured():
+        return None
+
+    candidates: list[str] = []
+    base = os.environ.get("AWS_URL", "").rstrip("/")
+    if base:
+        candidates.append(base + "/")
+    endpoint = os.environ.get("AWS_ENDPOINT", "").rstrip("/")
+    bucket = os.environ.get("AWS_BUCKET", "")
+    if endpoint and bucket:
+        candidates.append(f"{endpoint}/{bucket}/")
+    if endpoint:
+        candidates.append(endpoint + "/")
+
+    for prefix in candidates:
+        if url.startswith(prefix):
+            key = url[len(prefix):].split("?", 1)[0]
+            return key or None
+
+    # Fallback: locate the configured storage prefix anywhere in the URL.
+    marker = f"/{STORAGE_PREFIX}/"
+    idx = url.find(marker)
+    if idx >= 0:
+        return url[idx + 1 :].split("?", 1)[0]
+    return None
+
+
+def presigned_url(key: str, expires_seconds: int = 3600) -> str | None:
+    """Short-lived GET link so the admin panel can show private objects."""
+    if not is_configured() or not key:
+        return None
+    try:
+        return _client().generate_presigned_url(
+            "get_object",
+            Params={"Bucket": os.environ["AWS_BUCKET"], "Key": key},
+            ExpiresIn=expires_seconds,
+        )
+    except (BotoCoreError, ClientError, KeyError) as exc:
+        print(f"Presign failed for {key}: {exc}", flush=True)
+        return None

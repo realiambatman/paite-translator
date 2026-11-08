@@ -15,12 +15,12 @@ export async function saveTranslationLog(input: {
   storageUrl?: string | null;
   source?: string | null;
   filename?: string | null;
-}): Promise<void> {
+}): Promise<string | null> {
   const db = getFirebaseDb();
-  if (!db) return;
+  if (!db) return null;
 
   try {
-    await addDoc(collection(db, COLLECTION), {
+    const ref = await addDoc(collection(db, COLLECTION), {
       src_lang: input.srcLang,
       tgt_lang: input.tgtLang,
       src_text: input.srcText,
@@ -32,7 +32,9 @@ export async function saveTranslationLog(input: {
       filename: input.filename ?? null,
       created_at: serverTimestamp(),
     });
+    return ref.id;
   } catch (err) {
     console.warn("Failed to save translation to Firestore:", err);
+    return null;
   }
 }

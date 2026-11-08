@@ -23,6 +23,13 @@ export interface GoogleQuotaStatus {
   resets_at_utc: string;
 }
 
+export interface DecodingInfo {
+  num_beams: number;
+  repetition_penalty: number;
+  no_repeat_ngram_size: number;
+  alternatives: boolean;
+}
+
 export interface ModelStatus {
   ready: boolean;
   device: string;
@@ -35,6 +42,9 @@ export interface ModelStatus {
   google_translate_configured?: boolean;
   google_quota?: GoogleQuotaStatus;
   object_storage_configured?: boolean;
+  simplify_available?: boolean;
+  decoding?: DecodingInfo;
+  glossary_enabled?: boolean;
 }
 
 export interface TranslateResult {
@@ -60,6 +70,37 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function fetchStatus(): Promise<ModelStatus> {
   return request<ModelStatus>("/api/status");
+}
+
+export async function fetchAlternatives(
+  text: string,
+  srcLang: LangCode,
+  tgtLang: LangCode,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const payload = await request<{ alternatives: string[] }>(
+    "/api/translate/alternatives",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, src_lang: srcLang, tgt_lang: tgtLang }),
+      signal,
+    },
+  );
+  return payload.alternatives ?? [];
+}
+
+export async function simplifyEnglish(
+  text: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const payload = await request<{ text: string }>("/api/simplify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+    signal,
+  });
+  return payload.text;
 }
 
 export interface StreamUpdate {

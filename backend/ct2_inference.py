@@ -91,11 +91,17 @@ def translate_batch_ct2(
     tgt_lang: str,
     batch_size: int,
     num_beams: int,
-) -> list[str]:
+    *,
+    repetition_penalty: float = 1.0,
+    no_repeat_ngram_size: int = 0,
+    num_hypotheses: int = 1,
+) -> list[str] | list[list[str]]:
+    """Translate sentences; with num_hypotheses > 1 returns n-best lists."""
     assert engine.tokenizer is not None and engine.ct2_translator is not None
 
-    translated: list[str] = []
+    translated: list = []
     target_prefix = [tgt_lang]
+    num_hypotheses = max(1, min(num_hypotheses, num_beams))
 
     for i in range(0, len(sentences), batch_size):
         batch = sentences[i : i + batch_size]
@@ -113,16 +119,22 @@ def translate_batch_ct2(
             sources,
             target_prefix=[target_prefix] * len(sources),
             beam_size=num_beams,
+            num_hypotheses=num_hypotheses,
             max_decoding_length=max_decoding_length,
+            repetition_penalty=repetition_penalty,
+            no_repeat_ngram_size=no_repeat_ngram_size,
         )
 
-        for result in results:
-            tokens = result.hypotheses[0][1:]
-            translated.append(
-                engine.tokenizer.decode(
-                    engine.tokenizer.convert_tokens_to_ids(tokens),
-                    skip_special_tokens=True,
-                )
+        def decode(tokens: list[str]) -> str:
+            return engine.tokenizer.decode(
+                engine.tokenizer.convert_tokens_to_ids(tokens[1:]),
+                skip_special_tokens=True,
             )
+
+        for result in results:
+            if num_hypotheses > 1:
+                translated.append([decode(h) for h in result.hypotheses])
+            else:
+                translated.append(decode(result.hypotheses[0]))
 
     return translated

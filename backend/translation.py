@@ -22,6 +22,8 @@ from languages import (
 from limits import enforce_input_limits, limits_info
 from ct2_inference import CT2_MODEL_REPO, load_ct2, translate_batch_ct2
 from copy_through_fallback import ENABLED as COPY_THROUGH_FALLBACK_ENABLED, try_chunk_fallback
+import glossary
+from text_normalize import normalize_input
 from transformers import AutoModelForSeq2SeqLM, BitsAndBytesConfig, NllbTokenizer
 
 MODEL_REPO = os.environ.get("MODEL_REPO", "sensix-zo/nllb-paite-600m-v15")
@@ -32,6 +34,12 @@ CPU_BATCH_SIZE = int(os.environ.get("CPU_BATCH_SIZE", "1"))
 GPU_BATCH_SIZE = int(os.environ.get("GPU_BATCH_SIZE", "8"))
 KEEP_WARM_INTERVAL_SEC = int(os.environ.get("KEEP_WARM_INTERVAL_SEC", "300"))
 SENTENCE_GROUP_SIZE = max(1, int(os.environ.get("SENTENCE_GROUP_SIZE", "1")))
+# Decoding quality knobs (see .env.example). Repetition penalty > 1 and a
+# no-repeat n-gram size curb the looping output NLLB is prone to.
+REPETITION_PENALTY = float(os.environ.get("REPETITION_PENALTY", "1.1"))
+NO_REPEAT_NGRAM_SIZE = int(os.environ.get("NO_REPEAT_NGRAM_SIZE", "3"))
+CPU_NUM_BEAMS = int(os.environ.get("CPU_NUM_BEAMS", "3"))
+MAX_ALTERNATIVES = int(os.environ.get("MAX_ALTERNATIVES", "3"))
 
 ZOMI_NUMBERS = {
     "Khat": "1",
@@ -484,14 +492,24 @@ class TranslationEngine:
             "google_quota": quota_info(),
             "error": self.error,
             "limits": limits_info(),
+            "decoding": self.decoding_info(),
+            "glossary_enabled": glossary.is_available(),
         }
 
     def _num_beams(self) -> int:
         if os.environ.get("NUM_BEAMS"):
             return max(1, int(os.environ["NUM_BEAMS"]))
         if self.inference_backend == "ctranslate2":
-            return 1 if self.device == "cpu" else 4
-        return 5 if self.device == "cuda" else 1
+            return max(1, CPU_NUM_BEAMS) if self.device == "cpu" else 4
+        return 5 if self.device == "cuda" else max(1, CPU_NUM_BEAMS)
+
+    def decoding_info(self) -> dict:
+        return {
+            "num_beams": self._num_beams(),
+            "repetition_penalty": REPETITION_PENALTY,
+            "no_repeat_ngram_size": NO_REPEAT_NGRAM_SIZE,
+            "alternatives": self.inference_backend == "ctranslate2" and self._num_beams() > 1,
+        }
 
     def _batch_size(self) -> int:
         return GPU_BATCH_SIZE if self.device == "cuda" else CPU_BATCH_SIZE
@@ -569,7 +587,14 @@ class TranslationEngine:
 
         if self.inference_backend == "ctranslate2":
             return translate_batch_ct2(
-                self, sentences, src_lang, tgt_lang, batch_size, num_beams
+                self,
+                sentences,
+                src_lang,
+                tgt_lang,
+                batch_size,
+                num_beams,
+                repetition_penalty=REPETITION_PENALTY,
+                no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
             )
 
         assert self.model is not None
@@ -597,6 +622,8 @@ class TranslationEngine:
                 "max_new_tokens": dynamic_max_tokens,
                 "num_beams": num_beams,
                 "do_sample": False,
+                "repetition_penalty": REPETITION_PENALTY,
+                "no_repeat_ngram_size": NO_REPEAT_NGRAM_SIZE,
             }
 
             with torch.no_grad():
@@ -772,8 +799,44 @@ class TranslationEngine:
 
         raise ValueError(f"Unsupported language pair: {src_lang} -> {tgt_lang}")
 
+    def alternatives(self, text: str, src_lang: str, tgt_lang: str) -> list[str]:
+        """N-best translations for a short single-sentence English<->Paite input."""
+        self._validate_request(text, src_lang, tgt_lang)
+        text = normalize_input(text)
+        if not text or src_lang == tgt_lang:
+            return []
+        if resolve_route(src_lang, tgt_lang) != "hf":
+            return []
+        if self.inference_backend != "ctranslate2" or "\n" in text:
+            return []
+        num_beams = self._num_beams()
+        if num_beams < 2:
+            return []
+
+        hypotheses = translate_batch_ct2(
+            self,
+            [text],
+            src_lang,
+            tgt_lang,
+            1,
+            num_beams,
+            repetition_penalty=REPETITION_PENALTY,
+            no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
+            num_hypotheses=min(num_beams, MAX_ALTERNATIVES + 1),
+        )[0]
+        seen: set[str] = set()
+        unique: list[str] = []
+        for hyp in hypotheses:
+            cleaned = glossary.apply(hyp.strip(), src_lang, tgt_lang)
+            key = cleaned.lower()
+            if cleaned and key not in seen:
+                seen.add(key)
+                unique.append(cleaned)
+        return unique
+
     def translate(self, text: str, src_lang: str, tgt_lang: str) -> str:
         self._validate_request(text, src_lang, tgt_lang)
+        text = normalize_input(text)
 
         if not text or not text.strip():
             return ""
@@ -781,7 +844,7 @@ class TranslationEngine:
             return text
 
         result, _, _ = self._execute_translation(text, src_lang, tgt_lang)
-        return result
+        return glossary.apply(result, src_lang, tgt_lang)
 
     def _google_chars_used(
         self, route: str, text: str, pivot_english: str | None
@@ -808,7 +871,17 @@ class TranslationEngine:
 
     def translate_stream(self, text: str, src_lang: str, tgt_lang: str):
         """Yield partial translations with progress for streaming UI."""
+        for chunk in self._translate_stream_raw(text, src_lang, tgt_lang):
+            if chunk.get("translation"):
+                chunk = {
+                    **chunk,
+                    "translation": glossary.apply(chunk["translation"], src_lang, tgt_lang),
+                }
+            yield chunk
+
+    def _translate_stream_raw(self, text: str, src_lang: str, tgt_lang: str):
         self._validate_request(text, src_lang, tgt_lang)
+        text = normalize_input(text)
 
         if not text or not text.strip():
             yield {"translation": "", "current": 0, "total": 0}

@@ -1,5 +1,6 @@
 import os
 
+from starlette.exceptions import HTTPException
 from starlette.staticfiles import StaticFiles as StarletteStaticFiles
 from starlette.types import Scope
 
@@ -11,7 +12,14 @@ class SpaStaticFiles(StarletteStaticFiles):
     """Serve the SPA: never cache HTML shell; long-cache hashed assets."""
 
     async def get_response(self, path: str, scope: Scope):
-        response = await super().get_response(path, scope)
+        try:
+            response = await super().get_response(path, scope)
+        except HTTPException as exc:
+            if exc.status_code != 404 or not self._is_spa_route(path):
+                raise
+            # Client-side routes such as /admin: serve the app shell.
+            response = await super().get_response("index.html", scope)
+            path = "index.html"
         if response.status_code != 200:
             return response
 
@@ -28,3 +36,9 @@ class SpaStaticFiles(StarletteStaticFiles):
             response.headers["Cache-Control"] = IMMUTABLE
 
         return response
+
+    @staticmethod
+    def _is_spa_route(path: str) -> bool:
+        if path.startswith("api/") or path.startswith("assets/"):
+            return False
+        return "." not in os.path.basename(path)

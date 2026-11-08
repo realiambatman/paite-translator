@@ -7,9 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from admin.router import router as admin_router
 from file_extract import extract_text, supported_filename
 from lang_detect import language_check_payload
 from object_storage import is_configured as storage_configured, upload_bytes
+from simplify import is_available as simplify_available, simplify_english
 from static_files import SpaStaticFiles
 from limits import MAX_TRANSLATION_TOKENS, max_chars_for_tokens
 from translation import TranslationEngine
@@ -44,6 +46,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(admin_router)
 
 
 class TranslateRequest(BaseModel):
@@ -80,7 +84,45 @@ def version():
 def status():
     payload = engine.status()
     payload["object_storage_configured"] = storage_configured()
+    payload["simplify_available"] = simplify_available()
     return payload
+
+
+class AlternativesResponse(BaseModel):
+    alternatives: list[str]
+
+
+@app.post("/api/translate/alternatives", response_model=AlternativesResponse)
+def translate_alternatives(body: TranslateRequest):
+    """N-best candidates for short single-sentence English<->Paite inputs."""
+    if not engine.ready:
+        raise HTTPException(status_code=503, detail="Model is still loading.")
+    try:
+        return AlternativesResponse(
+            alternatives=engine.alternatives(body.text, body.src_lang, body.tgt_lang)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+class SimplifyRequest(BaseModel):
+    text: str = Field(default="", max_length=max_chars_for_tokens(MAX_TRANSLATION_TOKENS) * 2)
+
+
+class SimplifyResponse(BaseModel):
+    text: str
+
+
+@app.post("/api/simplify", response_model=SimplifyResponse)
+def simplify(body: SimplifyRequest):
+    if not simplify_available():
+        raise HTTPException(status_code=503, detail="Simplify is not configured on the server.")
+    try:
+        return SimplifyResponse(text=simplify_english(body.text))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/api/translate", response_model=TranslateResponse)

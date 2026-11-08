@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   extractFile,
+  fetchAlternatives,
   fetchStatus,
   FILE_ACCEPT,
   type LangCode,
   type Language,
   type LanguageCheck,
   type ModelStatus,
+  simplifyEnglish,
   translateTextStream,
 } from "./services/api";
 import {
@@ -15,6 +17,16 @@ import {
   DEFAULT_MAX_TOKENS,
 } from "./utils/textLimits";
 import { saveTranslationLog } from "./services/translationLog";
+import { saveFeedback } from "./services/corrections";
+import {
+  clearHistory,
+  loadHistory,
+  pushHistory,
+  type HistoryItem,
+} from "./services/history";
+import { FeedbackPanel, type LastResult } from "./components/FeedbackPanel";
+import { PivotEditor } from "./components/PivotEditor";
+import { RecentHistory } from "./components/RecentHistory";
 import { fetchGoogleQuota, incrementGoogleQuota } from "./services/googleQuota";
 import { FALLBACK_LANGUAGES } from "./languages";
 import { LanguageSelect } from "./components/LanguageSelect";
@@ -24,6 +36,10 @@ import { UploadFileModal } from "./components/UploadFileModal";
 import { isImageFile, isSupportedUploadFile } from "./utils/cropImage";
 
 const HF_LANGS = new Set<LangCode>(["eng_Latn", "pai_Latn"]);
+const ENGLISH: LangCode = "eng_Latn";
+const PAITE: LangCode = "pai_Latn";
+// Alternatives are only fetched for short single-sentence English<->Paite inputs.
+const ALTERNATIVES_MAX_CHARS = 220;
 
 const EXAMPLES: { text: string; src: LangCode; tgt: LangCode }[] = [
   {
@@ -76,6 +92,11 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false);
   const dragDepthRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
+  const [lastResult, setLastResult] = useState<LastResult | null>(null);
+  const [alternatives, setAlternatives] = useState<string[]>([]);
+  const [history, setHistory] = useState<HistoryItem[]>(() => loadHistory());
+  const [isSimplifying, setIsSimplifying] = useState(false);
+  const [simplifyBackup, setSimplifyBackup] = useState<string | null>(null);
   const [firestoreCharsUsed, setFirestoreCharsUsed] = useState<number | null>(
     null,
   );
@@ -187,6 +208,8 @@ export default function App() {
     setIsTranslating(true);
     setError(null);
     setOutputText("");
+    setLastResult(null);
+    setAlternatives([]);
 
     try {
       const result = await translateTextStream(
@@ -197,12 +220,42 @@ export default function App() {
         controller.signal,
       );
       if (result.translation) {
+        const summary: LastResult = {
+          srcText: text,
+          srcLang: src,
+          tgtLang: tgt,
+          translation: result.translation,
+          route: result.route ?? null,
+          pivotEnglish: result.pivotEnglish ?? null,
+          translationId: null,
+        };
+        setLastResult(summary);
+        setHistory((prev) =>
+          pushHistory(
+            { srcLang: src, tgtLang: tgt, srcText: text, tgtText: result.translation },
+            prev,
+          ),
+        );
+
+        const wantsAlternatives =
+          (status?.decoding?.alternatives ?? false) &&
+          result.route === "hf" &&
+          !text.includes("\n") &&
+          text.trim().length <= ALTERNATIVES_MAX_CHARS;
+        if (wantsAlternatives) {
+          fetchAlternatives(text, src, tgt, controller.signal)
+            .then((alts) => {
+              if (!controller.signal.aborted) setAlternatives(alts);
+            })
+            .catch(() => undefined);
+        }
+
         void (async () => {
           if (result.googleCharsUsed && result.googleCharsUsed > 0) {
             await incrementGoogleQuota(result.googleCharsUsed);
             await refreshQuota();
           }
-          await saveTranslationLog({
+          const id = await saveTranslationLog({
             srcLang: src,
             tgtLang: tgt,
             srcText: text,
@@ -213,6 +266,13 @@ export default function App() {
             source: lastExtractMeta?.source,
             filename: lastExtractMeta?.filename,
           });
+          if (id) {
+            setLastResult((prev) =>
+              prev && prev.translation === result.translation
+                ? { ...prev, translationId: id }
+                : prev,
+            );
+          }
         })();
       }
     } catch (err) {
@@ -227,6 +287,67 @@ export default function App() {
   };
 
   const handleTranslate = () => runTranslation(inputText, srcLang, tgtLang);
+
+  const handlePivotRetranslate = (english: string) => {
+    if (!lastResult || !english.trim()) return;
+    const edited = english.trim() !== (lastResult.pivotEnglish ?? "").trim();
+    if (edited && lastResult.route === "from_paite" && lastResult.srcLang === PAITE) {
+      // The user fixed the model's Paite→English step: that is a correction
+      // for the core model, worth keeping even though the final target differs.
+      void saveFeedback({
+        translationId: lastResult.translationId,
+        srcLang: PAITE,
+        tgtLang: ENGLISH,
+        srcText: lastResult.srcText,
+        modelText: lastResult.pivotEnglish ?? "",
+        correctedText: english,
+        comment: "Edited English pivot before re-translating",
+        route: lastResult.route,
+      });
+    }
+    void runTranslation(english, ENGLISH, lastResult.tgtLang);
+  };
+
+  const handlePickAlternative = (alt: string) => {
+    setOutputText(alt);
+  };
+
+  const handleHistoryPick = (item: HistoryItem) => {
+    setInputText(item.srcText);
+    setSrcLang(item.srcLang);
+    setTgtLang(item.tgtLang);
+    setOutputText(item.tgtText);
+    setLastResult(null);
+    setAlternatives([]);
+    setError(null);
+  };
+
+  const handleSimplify = async () => {
+    if (!inputText.trim() || isSimplifying) return;
+    setIsSimplifying(true);
+    setError(null);
+    try {
+      const simplified = await simplifyEnglish(inputText);
+      if (simplified.trim() && simplified.trim() !== inputText.trim()) {
+        setSimplifyBackup(inputText);
+        setInputText(simplified);
+        setFileStatus("English simplified for the Paite model. Review it, then click Translate.");
+      } else {
+        setFileStatus("Text is already simple enough.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not simplify text.");
+    } finally {
+      setIsSimplifying(false);
+    }
+  };
+
+  const handleUndoSimplify = () => {
+    if (simplifyBackup == null) return;
+    setInputText(simplifyBackup);
+    setSimplifyBackup(null);
+    setFileStatus(null);
+  };
 
   const handleSwap = () => {
     setSrcLang(tgtLang);
@@ -492,6 +613,20 @@ export default function App() {
               Camera
             </button>
 
+            {status?.simplify_available && srcLang === ENGLISH && (
+              <button
+                type="button"
+                onClick={handleSimplify}
+                disabled={
+                  !inputText.trim() || isSimplifying || isTranslating || isExtracting
+                }
+                title="Rewrite long or idiomatic English into short plain sentences the Paite model handles better"
+                className="rounded-full border border-zomi-gold/40 bg-zomi-gold/10 px-3 py-1.5 text-sm text-zomi-ink transition hover:border-zomi-gold/70 hover:bg-zomi-gold/20 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSimplifying ? "Simplifying…" : "Simplify English"}
+              </button>
+            )}
+
             <button
               type="button"
               onClick={handleTranslate}
@@ -530,6 +665,18 @@ export default function App() {
           {fileStatus && (
             <p className="border-b border-stone-300/40 bg-zomi-paper/60 px-4 py-2 text-xs text-zomi-muted">
               {fileStatus}
+              {simplifyBackup != null && (
+                <>
+                  {" "}
+                  <button
+                    type="button"
+                    onClick={handleUndoSimplify}
+                    className="text-zomi-red hover:underline"
+                  >
+                    Undo
+                  </button>
+                </>
+              )}
             </p>
           )}
 
@@ -587,8 +734,17 @@ export default function App() {
               </div>
               <textarea
                 value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                placeholder="Enter text to translate…"
+                onChange={(e) => {
+                  setInputText(e.target.value);
+                  if (simplifyBackup != null) setSimplifyBackup(null);
+                }}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                    e.preventDefault();
+                    if (canTranslate) handleTranslate();
+                  }
+                }}
+                placeholder="Enter text to translate… (Ctrl+Enter to translate)"
                 disabled={isTranslating || isExtracting}
                 className="min-h-[280px] flex-1 resize-none border-0 bg-transparent px-4 pb-2 text-base leading-relaxed text-zomi-ink outline-none placeholder:text-stone-400 disabled:opacity-70 md:min-h-[360px]"
               />
@@ -665,8 +821,29 @@ export default function App() {
                   </p>
                 )}
               </div>
+              {lastResult && outputText && !isTranslating && (
+                <FeedbackPanel
+                  key={`${lastResult.srcText}::${lastResult.translation}`}
+                  result={lastResult}
+                  outputText={outputText}
+                  alternatives={alternatives}
+                  tgtLabel={langLabel(languages, lastResult.tgtLang)}
+                  onPickAlternative={handlePickAlternative}
+                />
+              )}
             </section>
           </div>
+
+          {lastResult?.pivotEnglish && !isTranslating && (
+            <PivotEditor
+              key={lastResult.pivotEnglish}
+              pivot={lastResult.pivotEnglish}
+              route={lastResult.route}
+              tgtLabel={langLabel(languages, lastResult.tgtLang)}
+              disabled={isTranslating || isExtracting}
+              onRetranslate={handlePivotRetranslate}
+            />
+          )}
         </div>
 
         <section className="mt-6">
@@ -687,6 +864,14 @@ export default function App() {
             ))}
           </div>
         </section>
+
+        <RecentHistory
+          items={history}
+          langLabel={(code) => langLabel(languages, code)}
+          disabled={isTranslating || isExtracting}
+          onPick={handleHistoryPick}
+          onClear={() => setHistory(clearHistory())}
+        />
 
         <section className="mt-8 rounded-xl border border-stone-300/40 bg-zomi-paper/40 px-4 py-4 text-sm text-zomi-muted">
           <h2 className="mb-2 font-serif text-base font-semibold text-zomi-ink">
