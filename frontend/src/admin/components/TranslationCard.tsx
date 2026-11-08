@@ -105,7 +105,15 @@ export function TranslationCard({
   const [reviewError, setReviewError] = useState<string | null>(null);
 
   const chosen = reviewer || reviewers[0] || "";
-  const alreadyBy = item.llm_reviews?.find((r) => r.reviewer === chosen) ?? null;
+  const reviews =
+    item.llm_reviews && item.llm_reviews.length > 0
+      ? item.llm_reviews
+      : item.llm_review
+        ? [item.llm_review]
+        : [];
+  const reviewId = (r: { reviewer: string | null; provider: string | null; model: string | null }) =>
+    r.reviewer ?? `${r.provider}/${r.model}`;
+  const alreadyBy = reviews.find((r) => reviewId(r) === chosen) ?? null;
 
   const runReview = async (onExisting: OnExisting) => {
     if (!chosen) return;
@@ -317,7 +325,7 @@ export function TranslationCard({
             <p className="mt-2 rounded-lg bg-zomi-red/5 px-3 py-1.5 text-xs text-zomi-red-dark">{reviewError}</p>
           )}
 
-          {(corrections.length > 0 || thumbsUp + thumbsDown > 0 || candidates.length > 0) && (
+          {(corrections.length > 0 || thumbsUp + thumbsDown > 0 || candidates.length > 0 || reviews.length > 0) && (
             <div className="mt-2">
               <button
                 type="button"
@@ -329,7 +337,9 @@ export function TranslationCard({
                   {corrections.length === 0
                     ? thumbsUp + thumbsDown > 0
                       ? "Feedback"
-                      : "Model candidates"
+                      : reviews.length > 0
+                        ? "AI verdicts"
+                        : "Model candidates"
                     : `${corrections.length} suggestion${corrections.length === 1 ? "" : "s"}`}
                 </span>
                 {thumbsUp + thumbsDown > 0 && (
@@ -340,6 +350,11 @@ export function TranslationCard({
                 )}
                 {fromAi.length > 0 && (
                   <span className="text-violet-800">{fromAi.length} from AI</span>
+                )}
+                {reviews.length > 0 && (
+                  <span className="text-violet-800">
+                    {reviews.length} AI verdict{reviews.length === 1 ? "" : "s"}
+                  </span>
                 )}
                 {candidates.length > 0 && (
                   <span className="text-zomi-muted">
@@ -356,12 +371,38 @@ export function TranslationCard({
                     {forTraining} for training
                   </span>
                 )}
-                {(corrections.length > 0 || candidates.length > 0) && (
+                {(corrections.length > 0 || candidates.length > 0 || reviews.length > 0) && (
                   <span className="ml-auto text-zomi-red">{suggestionsOpen ? "Hide" : "Show"}</span>
                 )}
               </button>
               {suggestionsOpen && (
                 <div className="mt-2 space-y-3">
+                  {reviews.length > 0 && (
+                    <ul className="space-y-1 rounded-xl bg-violet-50/60 px-3 py-2 text-xs">
+                      {reviews.map((r) => (
+                        <li key={reviewId(r)} className="flex flex-wrap gap-x-2 text-zomi-ink">
+                          <span className="font-medium text-violet-800">{reviewId(r)}</span>
+                          <span
+                            className={
+                              r.verdict === "fix"
+                                ? "text-zomi-red-dark"
+                                : r.verdict === "ok"
+                                  ? "text-emerald-800"
+                                  : "text-amber-900"
+                            }
+                          >
+                            {r.verdict === "fix"
+                              ? "suggested a fix"
+                              : r.verdict === "ok"
+                                ? "looks fine"
+                                : "unsure, no fix offered"}
+                            {r.version && r.version > 1 ? ` (v${r.version})` : ""}
+                          </span>
+                          {r.note && <span className="text-zomi-muted">— {r.note}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   {corrections.length > 0 && (
                     <div className="grid gap-2 md:grid-cols-2">
                       {corrections.map((c) => (

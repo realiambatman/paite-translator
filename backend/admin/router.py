@@ -110,10 +110,17 @@ def _serialize(doc) -> dict:
         "is_image": bool(storage_url) and _is_image(filename, storage_url),
         "alternatives": [a for a in (data.get("alternatives") or []) if isinstance(a, str)][:5],
         "llm_review": _llm_review(data.get("llm_review")),
-        "llm_reviews": [
-            r for r in (_llm_review(v) for v in (data.get("llm_reviews") or {}).values()) if r
-        ],
+        "llm_reviews": _llm_reviews(data),
     }
+
+
+def _llm_reviews(data: dict) -> list[dict]:
+    reviews = [r for r in (_llm_review(v) for v in (data.get("llm_reviews") or {}).values()) if r]
+    legacy = _llm_review(data.get("llm_review"))
+    if legacy and not any(r["reviewer"] == legacy["reviewer"] for r in reviews):
+        reviews.append(legacy)
+    reviews.sort(key=lambda r: r.get("at") or "", reverse=True)
+    return reviews
 
 
 def _llm_review(value) -> dict | None:

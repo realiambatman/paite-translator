@@ -106,8 +106,7 @@ class ReviewJob:
         per_reviewer = {}
         for config in configs:
             rid = llm_provider.reviewer_id(config)
-            key = llm_provider.reviewer_key(rid)
-            already = sum(1 for item in items if key in (item.get("llm_reviews") or {}))
+            already = sum(1 for item in items if previous_review(item, config))
             per_reviewer[rid] = {"already_reviewed": already, "candidates": len(items)}
         return {"candidates": len(items), "reviewers": per_reviewer}
 
@@ -200,7 +199,6 @@ class ReviewJob:
             batch: list[dict] = []
             fetched = 0
             taken = 0
-            key = llm_provider.reviewer_key(llm_provider.reviewer_id(config))
             skip_reviewed = on_existing == "skip"
             # Over-fetch so skipped (already reviewed) items still let us reach `limit`.
             for doc in query.limit(limit * 3 if skip_reviewed else limit).stream():
@@ -211,8 +209,7 @@ class ReviewJob:
                 data = doc.to_dict() or {}
                 fetched += 1
                 self._update(scanned=fetched)
-                reviews = data.get("llm_reviews") or {}
-                previous = reviews.get(key)
+                previous = previous_review(data, config)
                 if previous and skip_reviewed:
                     self._update(skipped=self.snapshot()["skipped"] + 1)
                     continue
@@ -272,6 +269,22 @@ job = ReviewJob()
 
 
 # --------------------------------------------------------------------------- shared helpers
+
+
+def previous_review(data: dict, config: llm_provider.LLMConfig) -> dict | None:
+    """This model's earlier review of a translation, if any. Entries reviewed
+    before per-model tracking only carry the single legacy `llm_review` stamp."""
+    reviewer = llm_provider.reviewer_id(config)
+    reviews = data.get("llm_reviews") or {}
+    found = reviews.get(llm_provider.reviewer_key(reviewer))
+    if found:
+        return found
+    legacy = data.get("llm_review")
+    if isinstance(legacy, dict):
+        legacy_id = legacy.get("reviewer") or f"{legacy.get('provider')}/{legacy.get('model')}"
+        if legacy_id == reviewer:
+            return legacy
+    return None
 
 
 def ask_model(config: llm_provider.LLMConfig, batch: list[dict]) -> dict[str, dict]:
@@ -424,8 +437,7 @@ def review_one(doc_id: str, reviewer: str | None, on_existing: str = "keep") -> 
     if not (item.get("src_text") or "").strip() or not (item.get("tgt_text") or "").strip():
         raise ValueError("This entry has no text to review.")
 
-    key = llm_provider.reviewer_key(llm_provider.reviewer_id(config))
-    previous = (item.get("llm_reviews") or {}).get(key)
+    previous = previous_review(item, config)
     if previous and on_existing == "skip":
         return {"skipped": True, "reviewer": llm_provider.reviewer_id(config), "previous": previous}
 
