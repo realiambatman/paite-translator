@@ -25,15 +25,12 @@ export function LoginCard({ status, error, busy, onSubmit }: Props) {
 
   return (
     <div className="mx-auto mt-16 w-full max-w-md">
-      <div className="overflow-hidden rounded-2xl border border-stone-300/50 bg-zomi-paper/80 shadow-[0_8px_30px_rgb(28_25_23/0.06)] backdrop-blur-sm">
-        <div className="zomi-stripe h-1" />
+      <div className="overflow-hidden rounded-2xl border border-stone-300/60 bg-zomi-paper shadow-[0_12px_32px_-16px_rgb(28_25_23/0.18)]">
+        <div className="zomi-puan h-[10px]" aria-hidden />
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-6">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zomi-gold">
-              Zomi Translator
-            </p>
             <h1 className="font-serif text-2xl font-bold tracking-tight text-zomi-ink">
-              Admin sign in
+              Zomi Translator <span className="font-normal text-zomi-muted">admin</span>
             </h1>
             <p className="mt-1 text-sm text-zomi-muted">
               Enter the admin password set on the server to browse logged
@@ -56,7 +53,7 @@ export function LoginCard({ status, error, busy, onSubmit }: Props) {
           )}
 
           <label className="block">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-zomi-muted">
+            <span className="mb-1 block text-xs text-zomi-muted">
               Password
             </span>
             <input

@@ -536,6 +536,38 @@ export default function App() {
     };
   }, [canUploadFile]);
 
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    if (!outputText) return;
+    try {
+      await navigator.clipboard.writeText(outputText);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // Clipboard blocked — nothing else to do.
+    }
+  };
+
+  const handleClear = () => {
+    abortRef.current?.abort();
+    setInputText("");
+    setOutputText("");
+    setLastResult(null);
+    setAlternatives([]);
+    setError(null);
+    setFileStatus(null);
+    setLanguageWarning(null);
+    setLastExtractMeta(null);
+    setSimplifyBackup(null);
+  };
+
+  const busy = isTranslating || isExtracting;
+  const modelState: { label: string; tone: string } = status?.error
+    ? { label: "Model error", tone: "bg-zomi-red" }
+    : modelReady
+      ? { label: "Paite model ready", tone: "bg-emerald-600" }
+      : { label: "Warming up the model", tone: "bg-zomi-gold" };
+
   const barColor = inputAnalysis.overLimit
     ? "bg-zomi-red"
     : inputAnalysis.charRatio >= 0.85
@@ -543,127 +575,112 @@ export default function App() {
       : "bg-zomi-red/70";
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-zomi-cream text-zomi-ink">
-      <div className="pointer-events-none absolute -right-32 -top-32 h-96 w-96 rounded-full bg-zomi-gold/10 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-32 -left-32 h-96 w-96 rounded-full bg-zomi-red/10 blur-3xl" />
-      <div className="zomi-pattern pointer-events-none absolute inset-0 opacity-60" />
-      <div className="pointer-events-none absolute left-1/2 top-24 -translate-x-1/2 select-none font-serif text-[clamp(6rem,18vw,14rem)] font-bold leading-none tracking-tighter text-zomi-ink/[0.03]">
-        ZOMI
-      </div>
-
-      <div className="relative mx-auto max-w-7xl px-4 py-5 md:px-8 md:py-8">
-        <header className="mb-5 border-b border-stone-300/40 pb-4">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zomi-gold">
-              Zomi Language · Paite
-            </p>
-            <h1 className="font-serif text-2xl font-bold tracking-tight text-zomi-ink md:text-3xl">
+    <div className="min-h-screen bg-zomi-cream text-zomi-ink">
+      <div className="mx-auto max-w-6xl px-4 pb-10 pt-4 md:px-8 md:pt-6">
+        <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2 pb-3">
+          <div className="min-w-0">
+            <h1 className="font-serif text-[1.9rem] font-bold leading-none tracking-tight text-zomi-ink md:text-[2.4rem]">
               Zomi Translator
             </h1>
-            <p className="mt-1 max-w-lg text-sm text-zomi-muted">
-              Zomi translator for Paite — English ↔ Paite plus Mizo, Meitei,
-              Burmese, Hindi, and more regional and world languages.
+            <p className="mt-1.5 max-w-xl text-sm leading-snug text-zomi-muted">
+              English ↔ Paite, with Mizo, Meitei, Burmese, Hindi and more
+              languages of the Northeast and beyond.
             </p>
+          </div>
+          <div
+            className="inline-flex items-center gap-2 rounded-full border border-stone-300/60 bg-white/70 px-3 py-1 text-xs text-zomi-ink"
+            role="status"
+            aria-live="polite"
+          >
+            <span className={`h-2 w-2 rounded-full ${modelState.tone}`} aria-hidden />
+            {modelState.label}
           </div>
         </header>
 
-        <div className="overflow-hidden rounded-2xl border border-stone-300/50 bg-zomi-paper/80 shadow-[0_8px_30px_rgb(28_25_23/0.06)] backdrop-blur-sm">
-          <div className="zomi-stripe h-1" />
+        <div className="zomi-puan h-[14px] rounded-sm" aria-hidden />
 
-          <div className="flex flex-wrap items-center gap-2 border-b border-stone-300/40 px-4 py-3">
-            <LanguageSelect
-              value={srcLang}
-              onChange={setSrcLang}
-              languages={availableLanguages}
-              disabled={isTranslating || isExtracting}
-            />
-
-            <button
-              type="button"
-              onClick={handleSwap}
-              disabled={isTranslating || isExtracting}
-              className="rounded-full border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm text-zomi-red transition hover:border-zomi-red/30 hover:bg-white disabled:opacity-60"
-              aria-label="Swap languages"
-            >
-              ⇄
-            </button>
-
-            <LanguageSelect
-              value={tgtLang}
-              onChange={setTgtLang}
-              languages={availableLanguages}
-              disabled={isTranslating || isExtracting}
-            />
-
-            <button
-              type="button"
-              onClick={() => setUploadOpen(true)}
-              disabled={!canUploadFile}
-              className="rounded-full border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm text-zomi-ink transition hover:border-zomi-red/30 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Upload file
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setCameraOpen(true)}
-              disabled={!canUploadFile}
-              className="rounded-full border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm text-zomi-ink transition hover:border-zomi-red/30 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Camera
-            </button>
-
-            {status?.simplify_available && srcLang === ENGLISH && (
+        <div className="mt-5 overflow-hidden rounded-2xl border border-stone-300/60 bg-zomi-paper shadow-[0_1px_0_rgb(28_25_23/0.04),0_12px_32px_-16px_rgb(28_25_23/0.18)]">
+          <div className="flex flex-col gap-2 border-b border-stone-300/50 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-3 sm:px-4">
+            <div className="flex min-w-0 flex-1 items-center gap-1">
+              <LanguageSelect
+                value={srcLang}
+                onChange={setSrcLang}
+                languages={availableLanguages}
+                disabled={busy}
+              />
               <button
                 type="button"
-                onClick={handleSimplify}
-                disabled={
-                  !inputText.trim() || isSimplifying || isTranslating || isExtracting
-                }
-                title="Rewrite long or idiomatic English into short plain sentences the Paite model handles better"
-                className="rounded-full border border-zomi-gold/40 bg-zomi-gold/10 px-3 py-1.5 text-sm text-zomi-ink transition hover:border-zomi-gold/70 hover:bg-zomi-gold/20 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleSwap}
+                disabled={busy}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-zomi-red transition hover:bg-white disabled:opacity-50"
+                aria-label="Swap languages"
+                title="Swap languages"
               >
-                {isSimplifying ? "Simplifying…" : "Simplify English"}
+                <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M3 7h12m0 0-3-3m3 3-3 3M17 13H5m0 0 3 3m-3-3 3-3" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
               </button>
-            )}
+              <LanguageSelect
+                value={tgtLang}
+                onChange={setTgtLang}
+                languages={availableLanguages}
+                disabled={busy}
+              />
+            </div>
 
-            <button
-              type="button"
-              onClick={handleTranslate}
-              disabled={!canTranslate}
-              className="ml-auto inline-flex items-center gap-2 rounded-full bg-zomi-red px-5 py-1.5 text-sm font-semibold text-white transition hover:bg-zomi-red-dark disabled:cursor-not-allowed disabled:bg-stone-300"
-            >
-              {isTranslating && (
-                <span
-                  className="stream-spinner inline-block h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white"
-                  aria-hidden
-                />
+            <div className="flex flex-wrap items-center gap-1.5 text-sm">
+              <button
+                type="button"
+                onClick={() => setUploadOpen(true)}
+                disabled={!canUploadFile}
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-zomi-ink transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <svg viewBox="0 0 20 20" className="h-4 w-4 text-zomi-muted" fill="none" stroke="currentColor" strokeWidth="1.7">
+                  <path d="M10 13V4m0 0L6.5 7.5M10 4l3.5 3.5M4 13v2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Upload
+              </button>
+              <button
+                type="button"
+                onClick={() => setCameraOpen(true)}
+                disabled={!canUploadFile}
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-zomi-ink transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <svg viewBox="0 0 20 20" className="h-4 w-4 text-zomi-muted" fill="none" stroke="currentColor" strokeWidth="1.7">
+                  <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h2l1-1.5h5l1 1.5h2A1.5 1.5 0 0 1 17 7.5v7A1.5 1.5 0 0 1 15.5 16h-11A1.5 1.5 0 0 1 3 14.5z" strokeLinejoin="round" />
+                  <circle cx="10" cy="11" r="2.5" />
+                </svg>
+                Camera
+              </button>
+              {status?.simplify_available && srcLang === ENGLISH && (
+                <button
+                  type="button"
+                  onClick={handleSimplify}
+                  disabled={!inputText.trim() || isSimplifying || busy}
+                  title="Rewrite long or idiomatic English into short plain sentences the Paite model handles better"
+                  className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-zomi-ink transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <svg viewBox="0 0 20 20" className="h-4 w-4 text-zomi-gold" fill="none" stroke="currentColor" strokeWidth="1.7">
+                    <path d="M10 3v3m0 8v3m7-7h-3M6 10H3m11.5-4.5-2 2m-5 5-2 2m9 0-2-2m-5-5-2-2" strokeLinecap="round" />
+                  </svg>
+                  {isSimplifying ? "Simplifying…" : "Simplify English"}
+                </button>
               )}
-              {isTranslating
-                ? "Translating…"
-                : isExtracting
-                  ? "Reading…"
-                  : "Translate"}
-            </button>
+            </div>
           </div>
-
-          <p className="border-b border-stone-300/30 px-4 py-1.5 text-[10px] text-zomi-muted/80">
-            Upload or camera extracts text only — edit, then click Translate.
-            PDFs: delete unwanted parts in the box first.
-          </p>
 
           {error && (
             <div
               ref={errorRef}
               role="alert"
-              className="border-b border-zomi-red/25 bg-zomi-red/5 px-4 py-3 text-sm text-zomi-red-dark"
+              className="border-b border-zomi-red/20 bg-zomi-red/5 px-4 py-3 text-sm text-zomi-red-dark"
             >
               {error}
             </div>
           )}
 
           {fileStatus && (
-            <p className="border-b border-stone-300/40 bg-zomi-paper/60 px-4 py-2 text-xs text-zomi-muted">
+            <p className="border-b border-stone-300/50 bg-white/50 px-4 py-2 text-xs text-zomi-muted">
               {fileStatus}
               {simplifyBackup != null && (
                 <>
@@ -681,10 +698,10 @@ export default function App() {
           )}
 
           {languageWarning && (
-            <div className="border-b border-amber-200/60 bg-amber-50/80 px-4 py-3 text-xs text-amber-900">
+            <div className="border-b border-amber-200/70 bg-amber-50/80 px-4 py-3 text-xs text-amber-900">
               <p className="font-medium">{languageWarning.message}</p>
               <p className="mt-1">
-                Switch source language or edit the text, then click Translate.
+                Switch the source language or edit the text, then translate.
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {languageWarning.suggested_languages.map((lang) => (
@@ -702,14 +719,14 @@ export default function App() {
                   onClick={handleDismissLanguageWarning}
                   className="rounded-full border border-amber-300/80 bg-white px-3 py-1 text-xs text-amber-950 transition hover:bg-amber-50"
                 >
-                  Got it
+                  Keep {langLabel(languages, srcLang)}
                 </button>
               </div>
             </div>
           )}
 
           {googleQuotaExceeded && (
-            <p className="border-b border-amber-200/60 bg-amber-50/80 px-4 py-2 text-xs text-amber-900">
+            <p className="border-b border-amber-200/70 bg-amber-50/80 px-4 py-2 text-xs text-amber-900">
               Google Translate daily limit reached (
               {googleCharsUsed.toLocaleString()} /{" "}
               {googleDailyLimit?.toLocaleString()} characters). Only English ↔
@@ -718,7 +735,7 @@ export default function App() {
           )}
 
           {googleRequired && !googleEnabled && !googleQuotaExceeded && (
-            <p className="border-b border-amber-200/60 bg-amber-50/80 px-4 py-2 text-xs text-amber-900">
+            <p className="border-b border-amber-200/70 bg-amber-50/80 px-4 py-2 text-xs text-amber-900">
               This pair uses Google Translate through English. Set{" "}
               <code className="rounded bg-white/80 px-1">
                 GOOGLE_TRANSLATE_API_KEY
@@ -727,10 +744,19 @@ export default function App() {
             </p>
           )}
 
-          <div className="grid md:grid-cols-2 md:divide-x md:divide-stone-300/40">
-            <section className="flex min-h-[340px] flex-col md:min-h-[420px]">
-              <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-zomi-muted">
-                {langLabel(languages, srcLang)}
+          <div className="grid md:grid-cols-2">
+            <section className="flex min-h-[320px] flex-col md:min-h-[440px] md:border-r md:border-stone-300/50">
+              <div className="flex items-center justify-between gap-2 px-4 pt-3 text-xs text-zomi-muted">
+                <span>{langLabel(languages, srcLang)}</span>
+                {inputText && (
+                  <button
+                    type="button"
+                    onClick={handleClear}
+                    className="rounded-full px-2 py-0.5 text-zomi-muted transition hover:bg-white hover:text-zomi-red"
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
               <textarea
                 value={inputText}
@@ -744,54 +770,88 @@ export default function App() {
                     if (canTranslate) handleTranslate();
                   }
                 }}
-                placeholder="Enter text to translate… (Ctrl+Enter to translate)"
-                disabled={isTranslating || isExtracting}
-                className="min-h-[280px] flex-1 resize-none border-0 bg-transparent px-4 pb-2 text-base leading-relaxed text-zomi-ink outline-none placeholder:text-stone-400 disabled:opacity-70 md:min-h-[360px]"
+                placeholder="Type, paste, or upload a photo of text…"
+                disabled={busy}
+                aria-label={`Text in ${langLabel(languages, srcLang)}`}
+                className="min-h-[220px] flex-1 resize-none border-0 bg-transparent px-4 py-2 text-[17px] leading-relaxed text-zomi-ink outline-none placeholder:text-stone-400 disabled:opacity-70 md:min-h-[320px]"
               />
-              <div className="border-t border-stone-300/30 px-4 py-3">
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <span
-                    className={
-                      inputAnalysis.overLimit
-                        ? "font-medium text-zomi-red-dark"
-                        : "text-zomi-muted"
-                    }
-                  >
-                    {inputAnalysis.message}
-                  </span>
-                  <span className="tabular-nums text-zomi-muted">
-                    {inputAnalysis.chars.toLocaleString()}/
-                    {maxChars.toLocaleString()} characters
-                  </span>
-                </div>
-                <div
-                  className="h-1.5 overflow-hidden rounded-full bg-stone-200/80"
-                  role="progressbar"
-                  aria-valuenow={Math.round(inputAnalysis.charRatio * 100)}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-label="Character usage"
-                >
+              <div className="flex items-end justify-between gap-3 border-t border-stone-300/40 px-4 py-3">
+                <div className="min-w-0 flex-1">
+                  <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-3 text-xs">
+                    <span
+                      className={
+                        inputAnalysis.overLimit
+                          ? "font-medium text-zomi-red-dark"
+                          : "text-zomi-muted"
+                      }
+                    >
+                      {inputAnalysis.chars === 0
+                        ? "Ctrl+Enter to translate"
+                        : inputAnalysis.overLimit
+                          ? inputAnalysis.message
+                          : null}
+                    </span>
+                    <span className="tabular-nums text-zomi-muted">
+                      {inputAnalysis.chars.toLocaleString()} /{" "}
+                      {maxChars.toLocaleString()}
+                    </span>
+                  </div>
                   <div
-                    className={`h-full rounded-full transition-all duration-200 ${barColor}`}
-                    style={{
-                      width: `${Math.min(inputAnalysis.charRatio * 100, 100)}%`,
-                    }}
-                  />
+                    className="h-1 overflow-hidden rounded-full bg-stone-300/50"
+                    role="progressbar"
+                    aria-valuenow={Math.round(inputAnalysis.charRatio * 100)}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-label="Character usage"
+                  >
+                    <div
+                      className={`h-full rounded-full transition-all duration-200 ${barColor}`}
+                      style={{
+                        width: `${Math.min(inputAnalysis.charRatio * 100, 100)}%`,
+                      }}
+                    />
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={handleTranslate}
+                  disabled={!canTranslate}
+                  className="inline-flex shrink-0 items-center gap-2 rounded-full bg-zomi-red px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_16px_-6px_rgb(190_0_0/0.6)] transition hover:bg-zomi-red-dark disabled:cursor-not-allowed disabled:bg-stone-300 disabled:shadow-none"
+                >
+                  {isTranslating && (
+                    <span
+                      className="stream-spinner inline-block h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white"
+                      aria-hidden
+                    />
+                  )}
+                  {isTranslating
+                    ? "Translating…"
+                    : isExtracting
+                      ? "Reading…"
+                      : "Translate"}
+                </button>
               </div>
             </section>
 
-            <section className="flex min-h-[340px] flex-col border-t border-stone-300/40 md:min-h-[420px] md:border-t-0">
-              <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-zomi-red-dark">
-                {langLabel(languages, tgtLang)}
+            <section className="flex min-h-[320px] flex-col border-t border-stone-300/50 bg-white/40 md:min-h-[440px] md:border-t-0">
+              <div className="flex items-center justify-between gap-2 px-4 pt-3 text-xs text-zomi-red-dark">
+                <span>{langLabel(languages, tgtLang)}</span>
+                {outputText && !isTranslating && (
+                  <button
+                    type="button"
+                    onClick={handleCopy}
+                    className="rounded-full px-2 py-0.5 text-zomi-muted transition hover:bg-white hover:text-zomi-red"
+                  >
+                    {copied ? "Copied" : "Copy"}
+                  </button>
+                )}
               </div>
               <div
                 ref={outputRef}
-                className="min-h-[280px] flex-1 overflow-y-auto px-4 pb-4 md:min-h-[360px]"
+                className="min-h-[220px] flex-1 overflow-y-auto px-4 py-2 md:min-h-[320px]"
               >
                 {outputText ? (
-                  <p className="whitespace-pre-wrap font-serif text-base leading-relaxed text-zomi-ink">
+                  <p className="whitespace-pre-wrap font-serif text-[19px] leading-[1.7] text-zomi-ink">
                     {outputText}
                     {isTranslating && (
                       <span
@@ -801,7 +861,7 @@ export default function App() {
                     )}
                   </p>
                 ) : isTranslating ? (
-                  <div className="space-y-3">
+                  <div className="space-y-3 pt-1">
                     <div className="flex items-center gap-2 text-sm text-zomi-muted">
                       <span
                         className="stream-spinner inline-block h-4 w-4 rounded-full border-2 border-stone-300 border-t-zomi-red"
@@ -816,8 +876,8 @@ export default function App() {
                     </div>
                   </div>
                 ) : (
-                  <p className="text-sm text-stone-400">
-                    Translation appears here
+                  <p className="pt-1 font-serif text-lg italic text-stone-400">
+                    {langLabel(languages, tgtLang)} appears here.
                   </p>
                 )}
               </div>
@@ -840,63 +900,63 @@ export default function App() {
               pivot={lastResult.pivotEnglish}
               route={lastResult.route}
               tgtLabel={langLabel(languages, lastResult.tgtLang)}
-              disabled={isTranslating || isExtracting}
+              disabled={busy}
               onRetranslate={handlePivotRetranslate}
             />
           )}
         </div>
 
-        <section className="mt-6">
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-zomi-muted">
-            Try an example
-          </h2>
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {visibleExamples.map((example, index) => (
-              <button
-                key={index}
-                type="button"
-                onClick={() => handleExample(example)}
-                disabled={isTranslating || isExtracting || !modelReady}
-                className="min-w-[220px] max-w-xs shrink-0 rounded-xl border border-stone-300/50 bg-zomi-paper/60 p-3 text-left text-sm text-zomi-ink transition hover:border-zomi-red/30 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <span className="line-clamp-3">{example.text}</span>
-              </button>
-            ))}
-          </div>
+        <p className="mt-2 px-1 text-xs text-zomi-muted">
+          Uploads and camera photos only extract the text. Edit it, then
+          translate. Up to {maxChars.toLocaleString()} characters at a time.
+        </p>
+
+        <section className="mt-6 flex flex-wrap items-center gap-2">
+          <span className="text-sm text-zomi-muted">Try:</span>
+          {visibleExamples.map((example, index) => (
+            <button
+              key={index}
+              type="button"
+              onClick={() => handleExample(example)}
+              disabled={busy || !modelReady}
+              className="max-w-full truncate rounded-full border border-stone-300/60 bg-white/60 px-3.5 py-1.5 text-sm text-zomi-ink transition hover:border-zomi-red/40 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {example.text}
+            </button>
+          ))}
         </section>
 
         <RecentHistory
           items={history}
           langLabel={(code) => langLabel(languages, code)}
-          disabled={isTranslating || isExtracting}
+          disabled={busy}
           onPick={handleHistoryPick}
           onClear={() => setHistory(clearHistory())}
         />
 
-        <section className="mt-8 rounded-xl border border-stone-300/40 bg-zomi-paper/40 px-4 py-4 text-sm text-zomi-muted">
-          <h2 className="mb-2 font-serif text-base font-semibold text-zomi-ink">
-            About this Zomi translator
+        <section className="mt-10 grid gap-6 border-t border-stone-300/50 pt-6 md:grid-cols-[1fr_2fr]">
+          <h2 className="font-serif text-xl font-semibold leading-tight text-zomi-ink">
+            Built for Paite, the most widely spoken Zomi language.
           </h2>
-          <p>
-            Zomi translator helps you translate between English and Paite, the
-            most widely used Zomi language. Paite is spoken across Manipur,
-            Mizoram, Assam, and the Zomi diaspora worldwide. Use this Zomi
-            language translator and Paite translator for everyday phrases,
-            learning, and connecting with Zomi-speaking communities.
-          </p>
+          <div className="space-y-3 text-sm leading-relaxed text-zomi-muted">
+            <p>
+              Paite is spoken across Manipur, Mizoram, Assam and the Zomi
+              diaspora. English ↔ Paite runs on a model trained specifically
+              for the language. Other pairs pass through English using Google
+              Translate, and you can edit that English step when the meaning
+              drifts.
+            </p>
+            <p>
+              Every thumbs up, thumbs down and suggested fix goes back into
+              training the next version, so the translator improves with the
+              community that uses it.
+            </p>
+          </div>
         </section>
 
-        <footer className="mt-8 border-t border-stone-300/40 pt-4 text-center text-xs text-zomi-muted">
-          <p>
-            Up to {maxChars.toLocaleString()} characters per request — server
-            hardware costs money, so longer text isn&apos;t supported yet.
-          </p>
-          <p className="mt-1">
-            Paite is a Zomi language — built for speakers, learners, and
-            diaspora communities.
-          </p>
-          <p className="mt-1">
-            Built by{" "}
+        <footer className="mt-8 flex flex-wrap items-center justify-between gap-2 border-t border-stone-300/50 pt-4 text-xs text-zomi-muted">
+          <span>
+            Model by{" "}
             <a
               href="https://huggingface.co/sensix-zo"
               target="_blank"
@@ -905,8 +965,9 @@ export default function App() {
             >
               sensix-zo
             </a>{" "}
-            on Hugging Face
-          </p>
+            on Hugging Face.
+          </span>
+          <span>Free to use. Longer texts need more server than we have yet.</span>
         </footer>
       </div>
 
@@ -933,11 +994,9 @@ export default function App() {
       {isDragging && canUploadFile && (
         <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-zomi-red/10 backdrop-blur-[1px]">
           <div className="rounded-2xl border-2 border-dashed border-zomi-red bg-white/95 px-8 py-6 text-center shadow-lg">
-            <p className="font-medium text-zomi-ink">
-              Drop file to extract text
-            </p>
+            <p className="font-medium text-zomi-ink">Drop to read the text</p>
             <p className="mt-1 text-xs text-zomi-muted">
-              .txt, .pdf, .docx, or image
+              .txt, .pdf, .docx, or an image
             </p>
           </div>
         </div>

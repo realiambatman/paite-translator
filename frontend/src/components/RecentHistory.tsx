@@ -24,7 +24,7 @@ export function RecentHistory({ items, langLabel, disabled, onPick, onClear }: P
   return (
     <section className="mt-6">
       <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-zomi-muted">
+        <h2 className="text-sm text-zomi-muted">
           Recent on this device
         </h2>
         <button

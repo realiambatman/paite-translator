@@ -87,7 +87,7 @@ export function FeedbackPanel({
     <div className="border-t border-stone-300/30 px-4 py-3 text-xs">
       {visibleAlternatives.length > 0 && mode !== "correcting" && (
         <div className="mb-3">
-          <p className="mb-1.5 font-semibold uppercase tracking-wider text-zomi-muted">
+          <p className="mb-1.5 text-zomi-muted">
             Other suggestions
           </p>
           <div className="flex flex-wrap gap-1.5">

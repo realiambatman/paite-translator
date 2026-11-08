@@ -310,9 +310,8 @@ export default function AdminApp() {
 
   if (!authed) {
     return (
-      <div className="relative min-h-screen overflow-hidden bg-zomi-cream px-4 text-zomi-ink">
-        <div className="zomi-pattern pointer-events-none absolute inset-0 opacity-60" />
-        <div className="relative">
+      <div className="min-h-screen bg-zomi-cream px-4 text-zomi-ink">
+        <div>
           <LoginCard
             status={serverStatus}
             error={authError}
@@ -325,27 +324,16 @@ export default function AdminApp() {
   }
 
   return (
-    <div className="relative min-h-screen bg-zomi-cream text-zomi-ink">
-      <div className="zomi-pattern pointer-events-none fixed inset-0 opacity-60" />
-
-      <div className="relative mx-auto max-w-6xl px-4 py-5 md:px-8 md:py-8">
-        <header className="mb-5 flex flex-wrap items-end justify-between gap-3 border-b border-stone-300/40 pb-4">
+    <div className="min-h-screen bg-zomi-cream text-zomi-ink">
+      <div className="mx-auto max-w-6xl px-4 pb-10 pt-4 md:px-8 md:pt-6">
+        <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2 pb-3">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zomi-gold">
-              Zomi Translator · Admin
-            </p>
-            <h1 className="font-serif text-2xl font-bold tracking-tight text-zomi-ink md:text-3xl">
-              Translation log
+            <h1 className="font-serif text-[1.9rem] font-bold leading-none tracking-tight text-zomi-ink md:text-[2.4rem]">
+              Zomi Translator <span className="font-normal text-zomi-muted">admin</span>
             </h1>
-            <p className="mt-1 text-sm text-zomi-muted">
-              Every translation saved to Firestore
-              {serverStatus?.collection ? (
-                <>
-                  {" "}
-                  (<code className="rounded bg-white/70 px-1">{serverStatus.collection}</code>)
-                </>
-              ) : null}
-              , newest first, with the uploaded files and camera photos behind them.
+            <p className="mt-1.5 text-sm text-zomi-muted">
+              Everything visitors translated, what they and the AI reviewers suggested, and
+              the glossary that corrects the model on the way out.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -381,7 +369,11 @@ export default function AdminApp() {
           </div>
         </header>
 
-        <StatsBar stats={stats} loading={statsLoading} />
+        <div className="zomi-puan h-[14px] rounded-sm" aria-hidden />
+
+        <div className="mt-5">
+          <StatsBar stats={stats} loading={statsLoading} />
+        </div>
 
         {serverStatus && !serverStatus.storage_configured && (
           <p className="mt-3 rounded-xl border border-amber-200/60 bg-amber-50/80 px-3 py-2 text-xs text-amber-900">
@@ -390,21 +382,21 @@ export default function AdminApp() {
           </p>
         )}
 
-        <nav className="mt-5 flex flex-wrap gap-1 border-b border-stone-300/40" aria-label="Admin sections">
+        <nav className="mt-5 flex flex-wrap gap-1" aria-label="Admin sections">
           {TABS.map((t) => (
             <button
               key={t.id}
               type="button"
               onClick={() => switchTab(t.id)}
-              className={`-mb-px rounded-t-xl border px-4 py-2 text-sm font-medium transition ${
+              className={`rounded-full px-4 py-1.5 text-sm transition ${
                 tab === t.id
-                  ? "border-stone-300/50 border-b-zomi-paper bg-zomi-paper/80 text-zomi-ink"
-                  : "border-transparent text-zomi-muted hover:text-zomi-ink"
+                  ? "bg-zomi-ink font-semibold text-zomi-cream"
+                  : "text-zomi-muted hover:bg-white hover:text-zomi-ink"
               }`}
             >
               {t.label}
               {t.id === "corrections" && stats?.corrections?.pending ? (
-                <span className="ml-2 rounded-full bg-zomi-red px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${tab === t.id ? "bg-zomi-red text-white" : "bg-zomi-red/10 text-zomi-red-dark"}`}>
                   {stats.corrections.pending}
                 </span>
               ) : null}
@@ -412,8 +404,7 @@ export default function AdminApp() {
           ))}
         </nav>
 
-        <div className="overflow-hidden rounded-b-2xl rounded-tr-2xl border border-t-0 border-stone-300/50 bg-zomi-paper/80 shadow-[0_8px_30px_rgb(28_25_23/0.06)] backdrop-blur-sm">
-          <div className="zomi-stripe h-1" />
+        <div className="mt-2 overflow-hidden rounded-2xl border border-stone-300/60 bg-zomi-paper shadow-[0_1px_0_rgb(28_25_23/0.04),0_12px_32px_-16px_rgb(28_25_23/0.18)]">
 
           {tab === "corrections" && (
             <CorrectionsTab
@@ -457,7 +448,7 @@ export default function AdminApp() {
           {groups.map((group) => (
             <section key={group.key}>
               <div className="sticky top-0 z-10 flex items-center justify-between border-b border-stone-300/40 bg-zomi-paper/95 px-4 py-1.5 backdrop-blur">
-                <h2 className="text-xs font-semibold uppercase tracking-wider text-zomi-muted">
+                <h2 className="font-serif text-sm font-semibold text-zomi-ink">
                   {formatDayHeading(group.date)}
                 </h2>
                 <span className="text-[11px] tabular-nums text-zomi-muted">

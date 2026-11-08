@@ -9,6 +9,8 @@
   --color-zomi-gold: #b8860b;
   --color-zomi-ink: #1c1917;
   --color-zomi-muted: #78716c;
+  --color-zomi-black: #141210;
+  --font-serif: "Fraunces", "Iowan Old Style", Georgia, serif;
 }
 
 body {
@@ -26,6 +28,7 @@ body {
   background-size: 22px 22px;
 }
 
+/* Woven "puan" band: the horizontal stripes of Paite textiles. */
 .zomi-stripe {
   background: linear-gradient(
     90deg,
@@ -33,6 +36,36 @@ body {
     var(--color-zomi-gold) 50%,
     var(--color-zomi-red-dark) 100%
   );
+}
+
+.zomi-puan {
+  background: repeating-linear-gradient(
+    180deg,
+    var(--color-zomi-red) 0 3px,
+    var(--color-zomi-black) 3px 4px,
+    var(--color-zomi-cream) 4px 5px,
+    var(--color-zomi-black) 5px 6px,
+    var(--color-zomi-red) 6px 9px,
+    var(--color-zomi-gold) 9px 11px,
+    var(--color-zomi-red) 11px 14px
+  );
+}
+
+.zomi-puan-thin {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--color-zomi-red) 0 18px,
+    var(--color-zomi-black) 18px 20px,
+    var(--color-zomi-gold) 20px 26px,
+    var(--color-zomi-black) 26px 28px
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stream-cursor,
+  .stream-spinner {
+    animation-duration: 2s;
+  }
 }
 
 @keyframes stream-cursor-blink {

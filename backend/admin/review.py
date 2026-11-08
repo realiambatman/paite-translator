@@ -69,22 +69,82 @@ class ReviewJob:
         return self._thread is not None and self._thread.is_alive()
 
     # ----------------------------------------------------------------- control
-    def start(self, *, limit: int, skip_reviewed: bool, tgt_lang: str | None) -> dict:
+    @staticmethod
+    def resolve_reviewers(reviewers: list[str] | None) -> list[llm_provider.LLMConfig]:
+        configs: list[llm_provider.LLMConfig] = []
+        for item in reviewers or []:
+            provider, _, model = item.partition("/")
+            configs.append(llm_provider.config_for(provider.strip(), model.strip() or None))
+        if not configs:
+            active = llm_provider.active_config()
+            if active is None:
+                raise RuntimeError("No LLM provider configured. Add an API key first.")
+            configs = [active]
+        return configs
+
+    @staticmethod
+    def candidates(limit: int, tgt_lang: str | None) -> list[dict]:
+        """The translations a run would look at, newest first."""
+        from google.cloud import firestore
+        from google.cloud.firestore_v1 import FieldFilter
+
+        translations = fs.get_client().collection(fs.TRANSLATIONS_COLLECTION)
+        query = translations.order_by("created_at", direction=firestore.Query.DESCENDING)
+        if tgt_lang:
+            query = translations.where(filter=FieldFilter("tgt_lang", "==", tgt_lang))
+        out = []
+        for doc in query.limit(limit).stream():
+            data = doc.to_dict() or {}
+            if (data.get("src_text") or "").strip() and (data.get("tgt_text") or "").strip():
+                out.append({"id": doc.id, **data})
+        return out
+
+    def precheck(self, *, limit: int, tgt_lang: str | None, reviewers: list[str] | None) -> dict:
+        """How many of the candidate entries each model has already reviewed."""
+        configs = self.resolve_reviewers(reviewers)
+        items = self.candidates(limit, tgt_lang)
+        per_reviewer = {}
+        for config in configs:
+            rid = llm_provider.reviewer_id(config)
+            key = llm_provider.reviewer_key(rid)
+            already = sum(1 for item in items if key in (item.get("llm_reviews") or {}))
+            per_reviewer[rid] = {"already_reviewed": already, "candidates": len(items)}
+        return {"candidates": len(items), "reviewers": per_reviewer}
+
+    def start(
+        self,
+        *,
+        limit: int,
+        skip_reviewed: bool = True,
+        tgt_lang: str | None,
+        reviewers: list[str] | None = None,
+        on_existing: str = "skip",
+    ) -> dict:
+        """Start a review. `reviewers` are "provider/model" ids; each model
+        reviews the same batch of translations in turn, so one translation can
+        collect suggestions from several AIs."""
         if self.running:
             raise RuntimeError("A review is already running.")
-        config = llm_provider.active_config()
-        if config is None:
-            raise RuntimeError("No LLM provider configured. Add an API key first.")
+        if on_existing not in ("skip", "replace", "keep"):
+            raise RuntimeError("on_existing must be skip, replace or keep.")
+        if not skip_reviewed and on_existing == "skip":
+            on_existing = "keep"
+
+        configs = self.resolve_reviewers(reviewers)
 
         with self._lock:
             self.state = {
                 "status": "running",
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "finished_at": None,
-                "provider": config.provider,
-                "model": config.model,
+                "reviewers": [llm_provider.reviewer_id(c) for c in configs],
+                "current_reviewer": llm_provider.reviewer_id(configs[0]),
+                "provider": configs[0].provider,
+                "model": configs[0].model,
                 "limit": limit,
+                "on_existing": on_existing,
                 "scanned": 0,
+                "replaced": 0,
                 "reviewed": 0,
                 "ok": 0,
                 "fix": 0,
@@ -94,19 +154,37 @@ class ReviewJob:
                 "cancel": False,
             }
         self._thread = threading.Thread(
-            target=self._run,
-            args=(config, limit, skip_reviewed, tgt_lang),
+            target=self._run_all,
+            args=(configs, limit, on_existing, tgt_lang),
             daemon=True,
             name="llm-review",
         )
         self._thread.start()
         return self.snapshot()
 
+    def _run_all(self, configs, limit, on_existing, tgt_lang) -> None:
+        for config in configs:
+            if self.snapshot().get("cancel"):
+                break
+            self._update(
+                current_reviewer=llm_provider.reviewer_id(config),
+                provider=config.provider,
+                model=config.model,
+                scanned=0,
+            )
+            self._run(config, limit, on_existing, tgt_lang)
+            if self.snapshot()["status"] == "failed":
+                return
+        self._update(
+            status="cancelled" if self.snapshot().get("cancel") else "done",
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
+
     def cancel(self) -> None:
         self._update(cancel=True)
 
     # ----------------------------------------------------------------- worker
-    def _run(self, config: llm_provider.LLMConfig, limit: int, skip_reviewed: bool, tgt_lang: str | None) -> None:
+    def _run(self, config: llm_provider.LLMConfig, limit: int, on_existing: str, tgt_lang: str | None) -> None:
         try:
             from google.cloud import firestore
             from google.cloud.firestore_v1 import FieldFilter
@@ -121,32 +199,36 @@ class ReviewJob:
 
             batch: list[dict] = []
             fetched = 0
+            taken = 0
+            key = llm_provider.reviewer_key(llm_provider.reviewer_id(config))
+            skip_reviewed = on_existing == "skip"
             # Over-fetch so skipped (already reviewed) items still let us reach `limit`.
             for doc in query.limit(limit * 3 if skip_reviewed else limit).stream():
                 if self.snapshot().get("cancel"):
                     break
-                if self.snapshot()["reviewed"] + len(batch) >= limit:
+                if taken >= limit:
                     break
                 data = doc.to_dict() or {}
                 fetched += 1
                 self._update(scanned=fetched)
-                if skip_reviewed and data.get("llm_review"):
+                reviews = data.get("llm_reviews") or {}
+                previous = reviews.get(key)
+                if previous and skip_reviewed:
                     self._update(skipped=self.snapshot()["skipped"] + 1)
                     continue
+                if previous:
+                    data["_previous_version"] = int(previous.get("version") or 1)
+                    data["_replace"] = on_existing == "replace"
                 if not (data.get("src_text") or "").strip() or not (data.get("tgt_text") or "").strip():
                     self._update(skipped=self.snapshot()["skipped"] + 1)
                     continue
                 batch.append({"id": doc.id, **data})
+                taken += 1
                 if len(batch) >= BATCH_SIZE:
                     self._review_batch(config, batch, translations, corrections)
                     batch = []
             if batch and not self.snapshot().get("cancel"):
                 self._review_batch(config, batch, translations, corrections)
-
-            self._update(
-                status="cancelled" if self.snapshot().get("cancel") else "done",
-                finished_at=datetime.now(timezone.utc).isoformat(),
-            )
         except Exception as exc:  # keep the job state informative
             errors = self.snapshot().get("errors", [])
             self._update(
@@ -186,15 +268,22 @@ class ReviewJob:
             return
 
         by_id = {str(v.get("id")): v for v in verdicts if isinstance(v, dict)}
+        reviewer = llm_provider.reviewer_id(config)
         stamp = {
             "at": firestore.SERVER_TIMESTAMP,
             "provider": config.provider,
             "model": config.model,
+            "reviewer": reviewer,
         }
+        reviewer_key = llm_provider.reviewer_key(reviewer)
 
         for item in batch:
             verdict = by_id.get(item["id"]) or {}
             kind = str(verdict.get("verdict") or "unsure").lower()
+            previous_version = int(item.get("_previous_version") or 0)
+            version = 1 if item.get("_replace") else previous_version + 1
+            if item.get("_replace"):
+                self._delete_previous(corrections, item["id"], reviewer)
             if kind not in ("ok", "fix", "unsure"):
                 kind = "unsure"
             corrected = (verdict.get("corrected") or "").strip() if kind == "fix" else ""
@@ -213,7 +302,7 @@ class ReviewJob:
                         "kind": "correction",
                         "status": "pending",
                         "origin": "llm",
-                        "reviewer": f"{config.provider}/{config.model}",
+                        "reviewer": reviewer,
                         "confidence": confidence,
                         "translation_id": item["id"],
                         "src_lang": item.get("src_lang"),
@@ -222,6 +311,7 @@ class ReviewJob:
                         "model_text": item.get("tgt_text") or "",
                         "corrected_text": corrected[:1500],
                         "comment": note or None,
+                        "version": version,
                         "route": item.get("route"),
                         "pivot_english": item.get("pivot_english"),
                         "rating": None,
@@ -230,8 +320,10 @@ class ReviewJob:
                 )
 
             try:
-                translations.document(item["id"]).update(
-                    {"llm_review": {**stamp, "verdict": kind, "confidence": confidence, "note": note}}
+                review = {**stamp, "verdict": kind, "confidence": confidence, "note": note, "version": version}
+                translations.document(item["id"]).set(
+                    {"llm_review": review, "llm_reviews": {reviewer_key: review}},
+                    merge=True,
                 )
             except Exception as exc:
                 errors = self.snapshot().get("errors", [])
@@ -241,6 +333,26 @@ class ReviewJob:
             self._update(reviewed=snap["reviewed"] + 1, **{kind: snap[kind] + 1})
 
         time.sleep(0.2)  # be gentle with provider rate limits
+
+    def _delete_previous(self, corrections, translation_id: str, reviewer: str) -> None:
+        """Remove this model's earlier suggestions for one translation (replace mode)."""
+        from google.cloud.firestore_v1 import FieldFilter
+
+        try:
+            old = (
+                corrections.where(filter=FieldFilter("translation_id", "==", translation_id))
+                .where(filter=FieldFilter("reviewer", "==", reviewer))
+                .stream()
+            )
+            removed = 0
+            for doc in old:
+                doc.reference.delete()
+                removed += 1
+            if removed:
+                self._update(replaced=self.snapshot().get("replaced", 0) + removed)
+        except Exception as exc:
+            errors = self.snapshot().get("errors", [])
+            self._update(errors=[*errors, f"could not replace old suggestion for {translation_id}: {exc}"][-20:])
 
 
 job = ReviewJob()

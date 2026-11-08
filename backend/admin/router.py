@@ -109,6 +109,9 @@ def _serialize(doc) -> dict:
         "file_url": view_url,
         "is_image": bool(storage_url) and _is_image(filename, storage_url),
         "llm_review": _llm_review(data.get("llm_review")),
+        "llm_reviews": [
+            r for r in (_llm_review(v) for v in (data.get("llm_reviews") or {}).values()) if r
+        ],
     }
 
 
@@ -121,6 +124,8 @@ def _llm_review(value) -> dict | None:
         "note": value.get("note"),
         "provider": value.get("provider"),
         "model": value.get("model"),
+        "reviewer": value.get("reviewer") or f"{value.get('provider')}/{value.get('model')}",
+        "version": int(value.get("version") or 1),
         "at": _to_iso(value.get("at")),
     }
 
@@ -322,6 +327,7 @@ def _serialize_correction(doc) -> dict:
         "origin": data.get("origin") or "user",
         "reviewer": data.get("reviewer"),
         "confidence": data.get("confidence"),
+        "version": int(data.get("version") or 1),
     }
 
 
@@ -334,7 +340,7 @@ def _corrections_ref():
 
 @router.get("/corrections", dependencies=[Depends(require_admin)])
 def admin_corrections(
-    status: str = Query(default="pending"),
+    status: str = Query(default="all"),
     kind: str = Query(default="all", pattern="^(all|correction|rating)$"),
     limit: int = Query(default=500, ge=1, le=2000),
 ):
@@ -512,6 +518,23 @@ class ReviewRunIn(BaseModel):
     limit: int = Field(default=50, ge=1, le=1000)
     skip_reviewed: bool = True
     tgt_lang: str | None = None
+    reviewers: list[str] = Field(default_factory=list, max_length=6)
+    # What to do when a model has already reviewed an entry:
+    # skip it, replace its old suggestion, or keep both (new one becomes v2, v3, ...).
+    on_existing: str = Field(default="skip", pattern="^(skip|replace|keep)$")
+
+
+@router.post("/review/precheck", dependencies=[Depends(require_admin)])
+def admin_review_precheck(body: ReviewRunIn):
+    from .review import job
+
+    _firestore_or_503()
+    try:
+        return job.precheck(limit=body.limit, tgt_lang=body.tgt_lang, reviewers=body.reviewers)
+    except llm_provider.LLMError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/review/status", dependencies=[Depends(require_admin)])
@@ -527,7 +550,15 @@ def admin_review_run(body: ReviewRunIn):
 
     _firestore_or_503()
     try:
-        return job.start(limit=body.limit, skip_reviewed=body.skip_reviewed, tgt_lang=body.tgt_lang)
+        return job.start(
+            limit=body.limit,
+            skip_reviewed=body.skip_reviewed,
+            tgt_lang=body.tgt_lang,
+            reviewers=body.reviewers,
+            on_existing=body.on_existing,
+        )
+    except llm_provider.LLMError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

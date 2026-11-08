@@ -23,6 +23,7 @@ export interface AdminTranslation {
   file_url: string | null;
   is_image: boolean;
   llm_review: LlmReview | null;
+  llm_reviews: LlmReview[];
 }
 
 export interface LlmReview {
@@ -31,7 +32,16 @@ export interface LlmReview {
   note: string | null;
   provider: string | null;
   model: string | null;
+  reviewer: string | null;
+  version?: number;
   at: string | null;
+}
+
+export type OnExisting = "skip" | "replace" | "keep";
+
+export interface ReviewPrecheck {
+  candidates: number;
+  reviewers: Record<string, { already_reviewed: number; candidates: number }>;
 }
 
 export type CorrectionStatus = "pending" | "accepted" | "rejected";
@@ -55,6 +65,7 @@ export interface AdminCorrection {
   origin: "user" | "llm" | string;
   reviewer: string | null;
   confidence: number | null;
+  version: number;
 }
 
 export interface GlossaryRule {
@@ -91,6 +102,10 @@ export interface ReviewStatus {
   finished_at?: string | null;
   provider?: string;
   model?: string;
+  reviewers?: string[];
+  current_reviewer?: string;
+  on_existing?: OnExisting;
+  replaced?: number;
   limit?: number;
   scanned?: number;
   reviewed?: number;
@@ -356,9 +371,22 @@ export function fetchReviewStatus(token: string): Promise<ReviewStatus> {
 
 export function startReview(
   token: string,
-  body: { limit: number; skip_reviewed: boolean; tgt_lang?: string | null },
+  body: {
+    limit: number;
+    skip_reviewed: boolean;
+    tgt_lang?: string | null;
+    reviewers?: string[];
+    on_existing?: OnExisting;
+  },
 ): Promise<ReviewStatus> {
   return adminSend("/api/admin/review/run", token, "POST", body);
+}
+
+export function precheckReview(
+  token: string,
+  body: { limit: number; tgt_lang?: string | null; reviewers?: string[] },
+): Promise<ReviewPrecheck> {
+  return adminSend("/api/admin/review/precheck", token, "POST", body);
 }
 
 export function cancelReview(token: string): Promise<ReviewStatus> {

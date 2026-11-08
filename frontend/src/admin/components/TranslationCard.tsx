@@ -31,7 +31,7 @@ const ROUTE_LABELS: Record<string, string> = {
 function Badge({ className, children }: { className: string; children: string }) {
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${className}`}
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${className}`}
     >
       {children}
     </span>
@@ -108,19 +108,23 @@ export function TranslationCard({ item, langLabel, onOpenImage }: Props) {
             {item.is_image && imageFailed && (
               <span className="text-[10px] text-zomi-red-dark">· image not reachable</span>
             )}
-            {item.llm_review?.verdict && (
-              <span
-                title={`${item.llm_review.provider ?? ""}/${item.llm_review.model ?? ""}: ${item.llm_review.note ?? ""}`}
-                className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
-                  item.llm_review.verdict === "fix"
-                    ? "bg-zomi-red/10 text-zomi-red-dark"
-                    : item.llm_review.verdict === "ok"
-                      ? "bg-emerald-100 text-emerald-800"
-                      : "bg-amber-100 text-amber-900"
-                }`}
-              >
-                AI: {item.llm_review.verdict}
-              </span>
+            {(item.llm_reviews?.length ? item.llm_reviews : item.llm_review ? [item.llm_review] : []).map(
+              (review) =>
+                review.verdict && (
+                  <span
+                    key={review.reviewer ?? `${review.provider}/${review.model}`}
+                    title={`${review.reviewer ?? ""}: ${review.note ?? ""}`}
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      review.verdict === "fix"
+                        ? "bg-zomi-red/10 text-zomi-red-dark"
+                        : review.verdict === "ok"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : "bg-amber-100 text-amber-900"
+                    }`}
+                  >
+                    {review.model ?? "AI"}: {review.verdict}
+                  </span>
+                ),
             )}
           </div>
 
@@ -145,7 +149,7 @@ export function TranslationCard({ item, langLabel, onOpenImage }: Props) {
             <div className="mt-3 space-y-2 rounded-xl border border-stone-300/40 bg-zomi-cream/70 px-3 py-2 text-xs text-zomi-muted">
               {item.pivot_english && (
                 <p>
-                  <span className="font-semibold uppercase tracking-wider">
+                  <span className="font-semibold">
                     English pivot:
                   </span>{" "}
                   <span className="whitespace-pre-wrap text-zomi-ink">
@@ -154,21 +158,21 @@ export function TranslationCard({ item, langLabel, onOpenImage }: Props) {
                 </p>
               )}
               <p>
-                <span className="font-semibold uppercase tracking-wider">Logged:</span>{" "}
+                <span className="font-semibold">Logged:</span>{" "}
                 {formatFull(date)}
               </p>
               <p>
-                <span className="font-semibold uppercase tracking-wider">Length:</span>{" "}
+                <span className="font-semibold">Length:</span>{" "}
                 {item.src_chars.toLocaleString()} → {item.tgt_chars.toLocaleString()}{" "}
                 characters
               </p>
               <p className="break-all">
-                <span className="font-semibold uppercase tracking-wider">Doc id:</span>{" "}
+                <span className="font-semibold">Doc id:</span>{" "}
                 <code className="rounded bg-white/80 px-1">{item.id}</code>
               </p>
               {item.storage_key && (
                 <p className="break-all">
-                  <span className="font-semibold uppercase tracking-wider">Storage:</span>{" "}
+                  <span className="font-semibold">Storage:</span>{" "}
                   <code className="rounded bg-white/80 px-1">{item.storage_key}</code>
                 </p>
               )}

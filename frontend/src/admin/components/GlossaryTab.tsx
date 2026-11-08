@@ -116,7 +116,7 @@ export function GlossaryTab({ token, languages, onAuthError }: Props) {
       </div>
 
       <form onSubmit={submit} className="grid gap-2 border-b border-stone-300/40 px-4 py-3 md:grid-cols-[1fr_1fr_1.5fr_1.5fr_1.5fr_auto]">
-        <label className="text-[10px] font-semibold uppercase tracking-wider text-zomi-muted">
+        <label className="text-[11px] text-zomi-muted">
           Output language
           <select
             value={form.tgt_lang}
@@ -128,7 +128,7 @@ export function GlossaryTab({ token, languages, onAuthError }: Props) {
             ))}
           </select>
         </label>
-        <label className="text-[10px] font-semibold uppercase tracking-wider text-zomi-muted">
+        <label className="text-[11px] text-zomi-muted">
           Only from
           <select
             value={form.src_lang}
@@ -141,7 +141,7 @@ export function GlossaryTab({ token, languages, onAuthError }: Props) {
             ))}
           </select>
         </label>
-        <label className="text-[10px] font-semibold uppercase tracking-wider text-zomi-muted">
+        <label className="text-[11px] text-zomi-muted">
           Find in output
           <input
             value={form.find}
@@ -151,7 +151,7 @@ export function GlossaryTab({ token, languages, onAuthError }: Props) {
             className={`mt-1 block w-full ${inputClass}`}
           />
         </label>
-        <label className="text-[10px] font-semibold uppercase tracking-wider text-zomi-muted">
+        <label className="text-[11px] text-zomi-muted">
           Replace with
           <input
             value={form.replace}
@@ -160,7 +160,7 @@ export function GlossaryTab({ token, languages, onAuthError }: Props) {
             className={`mt-1 block w-full ${inputClass}`}
           />
         </label>
-        <label className="text-[10px] font-semibold uppercase tracking-wider text-zomi-muted">
+        <label className="text-[11px] text-zomi-muted">
           Note
           <input
             value={form.note}
@@ -192,7 +192,7 @@ export function GlossaryTab({ token, languages, onAuthError }: Props) {
         <p className="px-4 py-8 text-center text-sm text-zomi-muted">No rules yet.</p>
       ) : (
         <table className="w-full text-sm">
-          <thead className="text-left text-[10px] font-semibold uppercase tracking-wider text-zomi-muted">
+          <thead className="text-left text-[11px] text-zomi-muted">
             <tr className="border-b border-stone-300/40">
               <th className="px-4 py-2">Output</th>
               <th className="px-2 py-2">From</th>
@@ -237,7 +237,7 @@ export function GlossaryTab({ token, languages, onAuthError }: Props) {
       )}
 
       <div className="border-t border-stone-300/40 px-4 py-3">
-        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-zomi-muted">
+        <p className="mb-1 text-[11px] text-zomi-muted">
           Try the rules on sample output ({label(form.tgt_lang)})
         </p>
         <div className="flex flex-wrap gap-2">

@@ -24,19 +24,19 @@ PROVIDERS: dict[str, dict] = {
     "anthropic": {
         "label": "Claude (Anthropic)",
         "default_model": "claude-opus-5-5",
-        "models": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+        "models": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-4-8"],
         "env_key": "ANTHROPIC_API_KEY",
     },
     "openai": {
         "label": "GPT (OpenAI)",
         "default_model": "gpt-5",
-        "models": ["gpt-5", "gpt-5-mini", "gpt-4.1"],
+        "models": ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4o"],
         "env_key": "OPENAI_API_KEY",
     },
     "gemini": {
         "label": "Gemini (Google)",
         "default_model": "gemini-2.5-pro",
-        "models": ["gemini-2.5-pro", "gemini-2.5-flash"],
+        "models": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"],
         "env_key": "GEMINI_API_KEY",
     },
 }
@@ -60,6 +60,29 @@ class LLMConfig:
 
 class LLMError(RuntimeError):
     pass
+
+
+def reviewer_id(config: "LLMConfig") -> str:
+    """Human-readable reviewer name, e.g. "anthropic/claude-opus-5-5"."""
+    return f"{config.provider}/{config.model}"
+
+
+def reviewer_key(reviewer: str) -> str:
+    """Firestore-safe map key for a reviewer id (no dots or slashes)."""
+    return reviewer.replace("/", "__").replace(".", "_")
+
+
+def config_for(provider: str, model: str | None = None) -> "LLMConfig":
+    if provider not in PROVIDERS:
+        raise LLMError(f"Unknown provider: {provider}")
+    api_key = key_for(provider)
+    if not api_key:
+        raise LLMError(f"No API key saved for {PROVIDERS[provider]['label']}.")
+    return LLMConfig(
+        provider=provider,
+        model=(model or "").strip() or PROVIDERS[provider]["default_model"],
+        api_key=api_key,
+    )
 
 
 # --------------------------------------------------------------------------- settings

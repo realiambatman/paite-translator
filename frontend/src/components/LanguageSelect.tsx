@@ -19,13 +19,14 @@ export function LanguageSelect({
   const { common, more } = groupLanguages(languages);
 
   return (
-    <select
-      id={id}
-      value={value}
-      onChange={(e) => onChange(e.target.value as LangCode)}
-      disabled={disabled}
-      className="rounded-lg border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm font-medium text-zomi-ink outline-none focus:border-zomi-red/50 disabled:opacity-60"
-    >
+    <span className="relative inline-flex min-w-0 flex-1 items-center">
+      <select
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value as LangCode)}
+        disabled={disabled}
+        className="w-full cursor-pointer appearance-none rounded-xl border border-transparent bg-transparent py-2 pl-3 pr-8 font-serif text-lg font-semibold text-zomi-ink outline-none transition hover:bg-white/70 focus-visible:border-zomi-red/40 focus-visible:ring-2 focus-visible:ring-zomi-red/15 disabled:cursor-default disabled:opacity-60"
+      >
       <optgroup label="Common">
         {common.map((lang) => (
           <option key={lang.code} value={lang.code}>
@@ -42,6 +43,17 @@ export function LanguageSelect({
           ))}
         </optgroup>
       )}
-    </select>
+      </select>
+      <svg
+        aria-hidden
+        viewBox="0 0 20 20"
+        className="pointer-events-none absolute right-2.5 h-4 w-4 text-zomi-muted"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      >
+        <path d="M6 8l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </span>
   );
 }

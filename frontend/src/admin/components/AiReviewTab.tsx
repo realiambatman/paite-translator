@@ -4,10 +4,13 @@ import {
   cancelReview,
   fetchLlmSettings,
   fetchReviewStatus,
+  precheckReview,
   startReview,
   testLlm,
   updateLlmSettings,
   type LlmSettings,
+  type OnExisting,
+  type ReviewPrecheck,
   type ReviewStatus,
 } from "../api";
 import { formatNumber } from "../format";
@@ -30,10 +33,11 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
   const [error, setError] = useState<string | null>(null);
 
   const [limit, setLimit] = useState(50);
-  const [skipReviewed, setSkipReviewed] = useState(true);
   const [tgtLang, setTgtLang] = useState<string>("");
   const [review, setReview] = useState<ReviewStatus | null>(null);
   const [starting, setStarting] = useState(false);
+  const [reviewers, setReviewers] = useState<string[]>([]);
+  const [precheck, setPrecheck] = useState<ReviewPrecheck | null>(null);
   const pollRef = useRef<number | null>(null);
 
   const applySettings = useCallback((next: LlmSettings) => {
@@ -41,6 +45,10 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
     const active = next.provider ?? "anthropic";
     setProvider(active);
     setModel(next.model ?? next.providers[active]?.default_model ?? "");
+    setReviewers((prev) => {
+      if (prev.length > 0) return prev;
+      return next.available && next.model ? [`${active}/${next.model}`] : [];
+    });
   }, []);
 
   useEffect(() => {
@@ -136,16 +144,44 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
     }
   };
 
-  const run = async () => {
+  const launch = async (onExisting: OnExisting) => {
+    setPrecheck(null);
     setStarting(true);
     setError(null);
     try {
-      setReview(await startReview(token, { limit, skip_reviewed: skipReviewed, tgt_lang: tgtLang || null }));
+      setReview(
+        await startReview(token, {
+          limit,
+          skip_reviewed: onExisting === "skip",
+          tgt_lang: tgtLang || null,
+          reviewers,
+          on_existing: onExisting,
+        }),
+      );
     } catch (err) {
       if (!onAuthError(err)) setError(err instanceof Error ? err.message : "Could not start review.");
     } finally {
       setStarting(false);
     }
+  };
+
+  const run = async () => {
+    setStarting(true);
+    setError(null);
+    try {
+      const check = await precheckReview(token, { limit, tgt_lang: tgtLang || null, reviewers });
+      const anyExisting = Object.values(check.reviewers).some((r) => r.already_reviewed > 0);
+      if (anyExisting) {
+        setPrecheck(check);
+        setStarting(false);
+        return;
+      }
+    } catch (err) {
+      setStarting(false);
+      if (!onAuthError(err)) setError(err instanceof Error ? err.message : "Could not check entries.");
+      return;
+    }
+    await launch("skip");
   };
 
   const stop = async () => {
@@ -207,20 +243,22 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
         )}
 
         <div className="mt-3 grid gap-2 md:grid-cols-[1fr_1.4fr_auto]">
-          <label className="text-[10px] font-semibold uppercase tracking-wider text-zomi-muted">
+          <label className="text-[11px] text-zomi-muted">
             Model
-            <input
-              list="llm-models"
+            <select
               value={model}
               onChange={(e) => setModel(e.target.value)}
-              placeholder={providerMeta?.default_model}
               className={`mt-1 block w-full ${inputClass}`}
-            />
-            <datalist id="llm-models">
-              {providerMeta?.models.map((m) => <option key={m} value={m} />)}
-            </datalist>
+            >
+              {(providerMeta?.models ?? []).map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                  {m === providerMeta?.default_model ? " (recommended)" : ""}
+                </option>
+              ))}
+            </select>
           </label>
-          <label className="text-[10px] font-semibold uppercase tracking-wider text-zomi-muted">
+          <label className="text-[11px] text-zomi-muted">
             API key {keyInfo?.configured ? "(leave blank to keep the saved one)" : ""}
             <input
               type="password"
@@ -277,8 +315,52 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
           is not reviewed twice.
         </p>
 
+        {settings && (
+          <div className="mt-3">
+            <p className="mb-1.5 text-[11px] text-zomi-muted">
+              Review with
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(settings.providers).flatMap(([name, meta]) =>
+                meta.models.map((m) => {
+                  const id = `${name}/${m}`;
+                  const hasKey = settings.keys[name]?.configured ?? false;
+                  const on = reviewers.includes(id);
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      disabled={!hasKey || running}
+                      title={hasKey ? meta.label : `Save a ${meta.label} key first`}
+                      onClick={() =>
+                        setReviewers((prev) =>
+                          on ? prev.filter((r) => r !== id) : [...prev, id],
+                        )
+                      }
+                      className={`rounded-full border px-3 py-1 text-xs transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                        on
+                          ? "border-violet-300 bg-violet-100 text-violet-900"
+                          : "border-stone-300/60 bg-zomi-cream text-zomi-ink hover:bg-white"
+                      }`}
+                    >
+                      {on ? "✓ " : ""}
+                      {m}
+                    </button>
+                  );
+                }),
+              )}
+            </div>
+            <p className="mt-1 text-[11px] text-zomi-muted">
+              Pick more than one to get a second opinion: each model reviews the same
+              entries and its suggestions appear side by side in Corrections. If a model
+              has already reviewed some of these entries you will be asked whether to skip
+              them, replace its old suggestions, or keep both.
+            </p>
+          </div>
+        )}
+
         <div className="mt-3 flex flex-wrap items-end gap-3">
-          <label className="text-[10px] font-semibold uppercase tracking-wider text-zomi-muted">
+          <label className="text-[11px] text-zomi-muted">
             How many
             <input
               type="number"
@@ -289,7 +371,7 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
               className={`mt-1 block w-28 ${inputClass}`}
             />
           </label>
-          <label className="text-[10px] font-semibold uppercase tracking-wider text-zomi-muted">
+          <label className="text-[11px] text-zomi-muted">
             Target language
             <select
               value={tgtLang}
@@ -301,15 +383,6 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
                 <option key={l.code} value={l.code}>{l.label}</option>
               ))}
             </select>
-          </label>
-          <label className="inline-flex items-center gap-2 pb-2 text-xs text-zomi-ink">
-            <input
-              type="checkbox"
-              checked={skipReviewed}
-              onChange={(e) => setSkipReviewed(e.target.checked)}
-              className="accent-zomi-red"
-            />
-            Skip already-reviewed entries
           </label>
           {running ? (
             <button
@@ -323,11 +396,19 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
             <button
               type="button"
               onClick={run}
-              disabled={starting || !settings?.available}
-              title={settings?.available ? "" : "Save a working API key first"}
+              disabled={starting || !settings?.available || reviewers.length === 0}
+              title={
+                !settings?.available
+                  ? "Save a working API key first"
+                  : reviewers.length === 0
+                    ? "Pick at least one model"
+                    : ""
+              }
               className="rounded-full bg-zomi-red px-4 py-2 text-xs font-semibold text-white transition hover:bg-zomi-red-dark disabled:cursor-not-allowed disabled:bg-stone-300"
             >
-              {starting ? "Starting…" : `Review last ${limit}`}
+              {starting
+                ? "Starting…"
+                : `Review last ${limit}${reviewers.length > 1 ? ` with ${reviewers.length} models` : ""}`}
             </button>
           )}
         </div>
@@ -335,9 +416,16 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
         {review && review.status !== "idle" && (
           <div className="mt-4 rounded-xl border border-stone-300/50 bg-zomi-cream/70 px-3 py-3 text-xs">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="font-semibold uppercase tracking-wider text-zomi-muted">
+              <span className="text-zomi-muted">
                 {review.status === "running" ? "Reviewing…" : `Review ${review.status}`}
-                {review.provider ? ` · ${review.provider}/${review.model}` : ""}
+                {review.current_reviewer
+                  ? ` · ${review.current_reviewer}`
+                  : review.provider
+                    ? ` · ${review.provider}/${review.model}`
+                    : ""}
+                {review.reviewers && review.reviewers.length > 1
+                  ? ` (${review.reviewers.indexOf(review.current_reviewer ?? "") + 1} of ${review.reviewers.length})`
+                  : ""}
               </span>
               <span className="tabular-nums text-zomi-muted">
                 {formatNumber(review.reviewed)} / {formatNumber(review.limit)}
@@ -355,6 +443,11 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
               <Stat label="Unsure" value={review.unsure} tone="text-amber-900" />
               <Stat label="Skipped" value={review.skipped} tone="text-zomi-muted" />
             </div>
+            {review.replaced ? (
+              <p className="mt-2 text-zomi-muted">
+                {review.replaced} older suggestion{review.replaced === 1 ? "" : "s"} replaced.
+              </p>
+            ) : null}
             {review.errors && review.errors.length > 0 && (
               <ul className="mt-2 list-disc pl-4 text-zomi-red-dark">
                 {review.errors.slice(-5).map((e, i) => (
@@ -365,6 +458,80 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
           </div>
         )}
       </section>
+
+      {precheck && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="rereview-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-zomi-ink/60 p-4 backdrop-blur-sm"
+          onClick={() => setPrecheck(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md overflow-hidden rounded-2xl border border-stone-300/60 bg-zomi-paper shadow-2xl"
+          >
+            <div className="zomi-puan h-2" aria-hidden />
+            <div className="px-5 py-4">
+              <h3 id="rereview-title" className="font-serif text-lg font-semibold text-zomi-ink">
+                Some entries were already reviewed
+              </h3>
+              <ul className="mt-2 space-y-1 text-sm text-zomi-ink">
+                {Object.entries(precheck.reviewers).map(([rid, info]) => (
+                  <li key={rid}>
+                    <span className="font-medium">{rid}</span>: {info.already_reviewed} of{" "}
+                    {info.candidates} entr{info.candidates === 1 ? "y" : "ies"} already
+                    {info.already_reviewed === 1 ? " has" : " have"} its suggestion.
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-3 text-xs text-zomi-muted">
+                What should happen to those entries?
+              </p>
+              <div className="mt-3 grid gap-2">
+                <button
+                  type="button"
+                  onClick={() => launch("skip")}
+                  className="rounded-xl border border-stone-300/60 bg-white px-4 py-2.5 text-left text-sm transition hover:border-zomi-red/40"
+                >
+                  <span className="block font-semibold text-zomi-ink">Skip them</span>
+                  <span className="block text-xs text-zomi-muted">
+                    Only review entries this model has not seen yet.
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => launch("keep")}
+                  className="rounded-xl border border-stone-300/60 bg-white px-4 py-2.5 text-left text-sm transition hover:border-zomi-red/40"
+                >
+                  <span className="block font-semibold text-zomi-ink">Keep both, add the new one as v2</span>
+                  <span className="block text-xs text-zomi-muted">
+                    The earlier suggestion stays, the fresh one is labelled v2, v3 and so on.
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => launch("replace")}
+                  className="rounded-xl border border-zomi-red/30 bg-zomi-red/5 px-4 py-2.5 text-left text-sm transition hover:border-zomi-red/60"
+                >
+                  <span className="block font-semibold text-zomi-red-dark">Replace the old suggestions</span>
+                  <span className="block text-xs text-zomi-muted">
+                    Deletes this model's earlier suggestions for those entries, including any you
+                    marked for training, and reviews them again.
+                  </span>
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPrecheck(null)}
+                className="mt-3 text-xs text-zomi-muted hover:text-zomi-red hover:underline"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -372,7 +539,7 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
 function Stat({ label, value, tone }: { label: string; value: number | undefined; tone: string }) {
   return (
     <div className="rounded-lg bg-white/70 px-2.5 py-1.5">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-zomi-muted">{label}</p>
+      <p className="text-[11px] text-zomi-muted">{label}</p>
       <p className={`font-serif text-lg font-bold tabular-nums ${tone}`}>{formatNumber(value)}</p>
     </div>
   );
