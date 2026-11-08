@@ -227,21 +227,14 @@ export function fetchTranslations(
   );
 }
 
-export async function downloadCsv(token: string): Promise<void> {
-  const response = await adminFetch("/api/admin/export.csv", token);
-  const blob = await response.blob();
-  const disposition = response.headers.get("Content-Disposition") ?? "";
-  const match = /filename="?([^";]+)"?/.exec(disposition);
-  const filename = match?.[1] ?? "translations.csv";
+export type ExportFormat = "csv" | "json" | "jsonl";
 
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+export async function downloadTranslations(
+  token: string,
+  format: ExportFormat = "csv",
+): Promise<void> {
+  const response = await adminFetch(`/api/admin/export?format=${format}`, token);
+  await saveBlob(response, `translations.${format}`);
 }
 
 async function adminSend<T>(
@@ -270,6 +263,18 @@ export function fetchCorrections(
   return adminJson(`/api/admin/corrections?${params.toString()}`, token);
 }
 
+export function addCorrection(
+  token: string,
+  body: {
+    translation_id: string;
+    corrected_text: string;
+    comment?: string | null;
+    status?: CorrectionStatus;
+  },
+): Promise<AdminCorrection> {
+  return adminSend("/api/admin/corrections", token, "POST", body);
+}
+
 export function reviewCorrection(
   token: string,
   id: string,
@@ -286,15 +291,16 @@ export function deleteCorrection(token: string, id: string): Promise<{ ok: boole
   return adminSend(`/api/admin/corrections/${encodeURIComponent(id)}`, token, "DELETE");
 }
 
-export async function downloadCorrectionsCsv(
+export async function downloadCorrections(
   token: string,
   status: CorrectionStatus | "all" = "accepted",
+  format: ExportFormat = "csv",
 ): Promise<void> {
   const response = await adminFetch(
-    `/api/admin/corrections/export.csv?status=${status}`,
+    `/api/admin/corrections/export?status=${status}&format=${format}`,
     token,
   );
-  await saveBlob(response, `corrections-${status}.csv`);
+  await saveBlob(response, `corrections-${status}.${format}`);
 }
 
 async function saveBlob(response: Response, fallbackName: string) {

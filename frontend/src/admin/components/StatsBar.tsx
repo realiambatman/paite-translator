@@ -20,26 +20,21 @@ export function StatsBar({ stats, loading }: Props) {
   const thumbs = stats?.corrections;
 
   return (
-    <div className="grid grid-cols-3 divide-x divide-stone-300/40 overflow-hidden rounded-2xl border border-stone-300/60 bg-zomi-paper sm:grid-cols-5 lg:grid-cols-9">
+    <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 px-1 text-sm">
       {tiles.map((tile) => (
-        <div key={tile.label} className="px-3 py-2.5">
-          <p className="text-[11px] leading-tight text-zomi-muted">
-            {tile.label}
-          </p>
-          <p className="mt-0.5 font-serif text-2xl font-semibold tabular-nums text-zomi-ink">
+        <div key={tile.label} className="flex items-baseline gap-1.5">
+          <p className="font-serif text-lg font-semibold tabular-nums text-zomi-ink">
             {loading && !stats ? (
-              <span className="inline-block h-6 w-12 animate-pulse rounded bg-stone-300/40" />
+              <span className="inline-block h-4 w-8 animate-pulse rounded bg-stone-300/40 align-middle" />
             ) : (
               formatNumber(tile.value)
             )}
           </p>
+          <p className="text-xs text-zomi-muted">{tile.label.toLowerCase()}</p>
         </div>
       ))}
-      <div className="px-3 py-2.5">
-        <p className="text-[11px] leading-tight text-zomi-muted">
-          Ratings
-        </p>
-        <p className="mt-0.5 font-serif text-2xl font-semibold tabular-nums text-zomi-ink">
+      <div className="flex items-baseline gap-1.5">
+        <p className="font-serif text-lg font-semibold tabular-nums">
           <span className="text-emerald-700">👍 {formatNumber(thumbs?.thumbs_up)}</span>{" "}
           <span className="text-zomi-red-dark">👎 {formatNumber(thumbs?.thumbs_down)}</span>
         </p>

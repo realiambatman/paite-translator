@@ -3,12 +3,19 @@ import { FALLBACK_LANGUAGES } from "../languages";
 import { fetchStatus, type Language } from "../services/api";
 import {
   AdminAuthError,
-  downloadCsv,
+  addCorrection,
+  deleteCorrection,
+  downloadTranslations,
   fetchAdminStatus,
+  fetchCorrections,
   fetchLlmSettings,
   fetchStats,
   fetchTranslations,
+  reviewCorrection,
   reviewTranslation,
+  type AdminCorrection,
+  type CorrectionStatus,
+  type ExportFormat,
   type OnExisting,
   loadToken,
   storeToken,
@@ -19,6 +26,7 @@ import {
 } from "./api";
 import { AiReviewTab } from "./components/AiReviewTab";
 import { CorrectionsTab } from "./components/CorrectionsTab";
+import { ExportMenu } from "./components/ExportMenu";
 import { FilterBar, type Filters } from "./components/FilterBar";
 import { GlossaryTab } from "./components/GlossaryTab";
 import { ImageLightbox } from "./components/ImageLightbox";
@@ -97,8 +105,10 @@ export default function AdminApp() {
   const [lightbox, setLightbox] = useState<{ src: string; title: string | null } | null>(
     null,
   );
-  const [exporting, setExporting] = useState(false);
   const [tab, setTab] = useState<Tab>(() => tabFromHash());
+  const [corrections, setCorrections] = useState<AdminCorrection[]>([]);
+  const [correctionsLoading, setCorrectionsLoading] = useState(false);
+  const [busySuggestionId, setBusySuggestionId] = useState<string | null>(null);
   const [reviewers, setReviewers] = useState<string[]>([]);
 
   const loadReviewers = useCallback(async (activeToken: string) => {
@@ -115,15 +125,6 @@ export default function AdminApp() {
     }
   }, []);
 
-  const handleRowReview = useCallback(
-    async (item: AdminTranslation, reviewer: string, onExisting: OnExisting) => {
-      const response = await reviewTranslation(token, item.id, { reviewer, on_existing: onExisting });
-      setItems((prev) => prev.map((t) => (t.id === item.id ? response.item : t)));
-      if (response.result.verdict === "fix" || response.result.replaced) void loadStatsRef.current(token);
-      return response.result;
-    },
-    [token],
-  );
 
   const switchTab = (next: Tab) => {
     setTab(next);
@@ -211,13 +212,107 @@ export default function AdminApp() {
 
   loadStatsRef.current = loadStats;
 
+  const loadCorrections = useCallback(async (activeToken: string) => {
+    setCorrectionsLoading(true);
+    try {
+      const page = await fetchCorrections(activeToken, { status: "all", kind: "all" });
+      setCorrections(page.items);
+    } catch (err) {
+      if (!(err instanceof AdminAuthError)) console.warn("Corrections failed:", err);
+    } finally {
+      setCorrectionsLoading(false);
+    }
+  }, []);
+
+  const handleRowReview = useCallback(
+    async (item: AdminTranslation, reviewer: string, onExisting: OnExisting) => {
+      const response = await reviewTranslation(token, item.id, { reviewer, on_existing: onExisting });
+      setItems((prev) => prev.map((t) => (t.id === item.id ? response.item : t)));
+      if (response.result.verdict === "fix" || response.result.replaced) {
+        void loadStatsRef.current(token);
+        void loadCorrections(token);
+      }
+      return response.result;
+    },
+    [token, loadCorrections],
+  );
+
+  const handleSuggestionStatus = useCallback(
+    async (item: AdminCorrection, next: CorrectionStatus, editedText?: string) => {
+      setBusySuggestionId(item.id);
+      try {
+        const updated = await reviewCorrection(token, item.id, next, editedText);
+        setCorrections((prev) => prev.map((c) => (c.id === item.id ? updated : c)));
+        void loadStatsRef.current(token);
+      } catch (err) {
+        if (!handleAuthFailure(err)) {
+          setListError(err instanceof Error ? err.message : "Could not update the suggestion.");
+        }
+      } finally {
+        setBusySuggestionId(null);
+      }
+    },
+    [token, handleAuthFailure],
+  );
+
+  const handleSuggestionDelete = useCallback(
+    async (item: AdminCorrection) => {
+      if (!window.confirm("Delete this suggestion permanently? This cannot be undone.")) return;
+      setBusySuggestionId(item.id);
+      try {
+        await deleteCorrection(token, item.id);
+        setCorrections((prev) => prev.filter((c) => c.id !== item.id));
+        void loadStatsRef.current(token);
+      } catch (err) {
+        if (!handleAuthFailure(err)) {
+          setListError(err instanceof Error ? err.message : "Could not delete the suggestion.");
+        }
+      } finally {
+        setBusySuggestionId(null);
+      }
+    },
+    [token, handleAuthFailure],
+  );
+
+  const handleAdoptCandidate = useCallback(
+    async (item: AdminTranslation, text: string) => {
+      try {
+        const created = await addCorrection(token, {
+          translation_id: item.id,
+          corrected_text: text,
+          comment: "Picked from the model's other candidates",
+          status: "accepted",
+        });
+        setCorrections((prev) => [created, ...prev]);
+        void loadStatsRef.current(token);
+      } catch (err) {
+        if (!handleAuthFailure(err)) {
+          setListError(err instanceof Error ? err.message : "Could not save that candidate.");
+        }
+      }
+    },
+    [token, handleAuthFailure],
+  );
+
+  const suggestionsByTranslation = useMemo(() => {
+    const map = new Map<string, AdminCorrection[]>();
+    for (const c of corrections) {
+      if (!c.translation_id) continue;
+      const list = map.get(c.translation_id);
+      if (list) list.push(c);
+      else map.set(c.translation_id, [c]);
+    }
+    return map;
+  }, [corrections]);
+
   const refresh = useCallback(() => {
     if (!token) return;
     setItems([]);
     setCursor(null);
     void loadStats(token);
+    void loadCorrections(token);
     void loadPage(token, null, order);
-  }, [token, order, loadStats, loadPage]);
+  }, [token, order, loadStats, loadCorrections, loadPage]);
 
   // Auto sign-in with a remembered token.
   useEffect(() => {
@@ -251,8 +346,9 @@ export default function AdminApp() {
     setItems([]);
     setCursor(null);
     void loadStats(token);
+    void loadCorrections(token);
     void loadPage(token, null, order);
-  }, [authed, token, order, loadStats, loadPage]);
+  }, [authed, token, order, loadStats, loadCorrections, loadPage]);
 
   // Refresh the per-row reviewer list whenever the admin returns to the log,
   // since keys may have been added in the AI review tab meanwhile.
@@ -277,17 +373,14 @@ export default function AdminApp() {
     }
   };
 
-  const handleExport = async () => {
+  const handleExport = async (format: ExportFormat) => {
     if (!token) return;
-    setExporting(true);
     try {
-      await downloadCsv(token);
+      await downloadTranslations(token, format);
     } catch (err) {
       if (!handleAuthFailure(err)) {
         setListError(err instanceof Error ? err.message : "Export failed.");
       }
-    } finally {
-      setExporting(false);
     }
   };
 
@@ -360,54 +453,14 @@ export default function AdminApp() {
   return (
     <div className="min-h-screen bg-zomi-cream text-zomi-ink">
       <div className="mx-auto max-w-6xl px-4 pb-10 pt-4 md:px-8 md:pt-6">
-        <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2 pb-3">
-          <div>
-            <h1 className="font-serif text-[1.9rem] font-bold leading-none tracking-tight text-zomi-ink md:text-[2.4rem]">
-              Zomi Translator <span className="font-normal text-zomi-muted">admin</span>
-            </h1>
-            <p className="mt-1.5 text-sm text-zomi-muted">
-              Everything visitors translated, what they and the AI reviewers suggested, and
-              the glossary that corrects the model on the way out.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <a
-              href="/"
-              className="rounded-full border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-zomi-ink transition hover:border-zomi-red/30 hover:bg-white"
-            >
-              ← Translator
-            </a>
-            <button
-              type="button"
-              onClick={refresh}
-              disabled={listLoading}
-              className="rounded-full border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-zomi-ink transition hover:border-zomi-red/30 hover:bg-white disabled:opacity-60"
-            >
-              Refresh
-            </button>
-            <button
-              type="button"
-              onClick={handleExport}
-              disabled={exporting}
-              className="rounded-full border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-zomi-ink transition hover:border-zomi-red/30 hover:bg-white disabled:opacity-60"
-            >
-              {exporting ? "Exporting…" : "Export CSV"}
-            </button>
-            <button
-              type="button"
-              onClick={signOut}
-              className="rounded-full bg-zomi-red px-4 py-1.5 font-semibold text-white transition hover:bg-zomi-red-dark"
-            >
-              Sign out
-            </button>
-          </div>
+        <header className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 pb-2">
+          <h1 className="font-serif text-2xl font-bold leading-none tracking-tight text-zomi-ink">
+            Zomi Translator <span className="font-normal text-zomi-muted">admin</span>
+          </h1>
+          <StatsBar stats={stats} loading={statsLoading} />
         </header>
 
-        <div className="zomi-puan h-[14px] rounded-sm" aria-hidden />
-
-        <div className="mt-5">
-          <StatsBar stats={stats} loading={statsLoading} />
-        </div>
+        <div className="zomi-puan h-[10px] rounded-sm" aria-hidden />
 
         {serverStatus && !serverStatus.storage_configured && (
           <p className="mt-3 rounded-xl border border-amber-200/60 bg-amber-50/80 px-3 py-2 text-xs text-amber-900">
@@ -416,7 +469,8 @@ export default function AdminApp() {
           </p>
         )}
 
-        <nav className="mt-5 flex flex-wrap gap-1" aria-label="Admin sections">
+        <div className="mt-3 flex flex-wrap items-center gap-1">
+        <nav className="flex flex-wrap gap-1" aria-label="Admin sections">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -437,15 +491,45 @@ export default function AdminApp() {
             </button>
           ))}
         </nav>
+        <div className="ml-auto flex flex-wrap items-center gap-1 text-sm">
+          <a
+            href="/"
+            className="rounded-full px-3 py-1 text-zomi-muted transition hover:bg-white hover:text-zomi-ink"
+          >
+            ← Translator
+          </a>
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={listLoading}
+            className="rounded-full px-3 py-1 text-zomi-muted transition hover:bg-white hover:text-zomi-ink disabled:opacity-60"
+          >
+            Refresh
+          </button>
+          <ExportMenu label="Export log" compact onExport={handleExport} />
+          <button
+            type="button"
+            onClick={signOut}
+            className="rounded-full px-3 py-1 text-zomi-red transition hover:bg-white"
+          >
+            Sign out
+          </button>
+        </div>
+        </div>
 
         <div className="mt-2 overflow-hidden rounded-2xl border border-stone-300/60 bg-zomi-paper shadow-[0_1px_0_rgb(28_25_23/0.04),0_12px_32px_-16px_rgb(28_25_23/0.18)]">
 
           {tab === "corrections" && (
             <CorrectionsTab
               token={token}
+              items={corrections}
+              loading={correctionsLoading}
+              busyId={busySuggestionId}
               langLabel={langLabel}
+              onReload={() => void loadCorrections(token)}
+              onStatus={handleSuggestionStatus}
+              onDelete={handleSuggestionDelete}
               onAuthError={handleAuthFailure}
-              onChanged={refreshStats}
             />
           )}
           {tab === "glossary" && (
@@ -497,6 +581,11 @@ export default function AdminApp() {
                   onOpenImage={(src, title) => setLightbox({ src, title })}
                   reviewers={reviewers}
                   onReview={handleRowReview}
+                  suggestions={suggestionsByTranslation.get(item.id) ?? []}
+                  busySuggestionId={busySuggestionId}
+                  onSuggestionStatus={handleSuggestionStatus}
+                  onSuggestionDelete={handleSuggestionDelete}
+                  onAdoptCandidate={handleAdoptCandidate}
                 />
               ))}
             </section>

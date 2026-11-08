@@ -1,6 +1,7 @@
 import { useState } from "react";
-import type { AdminTranslation, OnExisting, ReviewOneResult } from "../api";
+import type { AdminCorrection, AdminTranslation, CorrectionStatus, OnExisting, ReviewOneResult } from "../api";
 import { formatFull, formatTime, parseDate, timeAgo } from "../format";
+import { SuggestionCard } from "./SuggestionCard";
 
 interface Props {
   item: AdminTranslation;
@@ -13,6 +14,13 @@ interface Props {
     reviewer: string,
     onExisting: OnExisting,
   ) => Promise<ReviewOneResult>;
+  /** Feedback and suggestions filed against this translation. */
+  suggestions: AdminCorrection[];
+  busySuggestionId: string | null;
+  onSuggestionStatus: (item: AdminCorrection, next: CorrectionStatus, editedText?: string) => void;
+  onSuggestionDelete: (item: AdminCorrection) => void;
+  /** Promote one of the model's own beam candidates to a training pair. */
+  onAdoptCandidate: (item: AdminTranslation, text: string) => Promise<void>;
 }
 
 const SOURCE_STYLES: Record<string, string> = {
@@ -53,8 +61,42 @@ async function copyText(text: string) {
   }
 }
 
-export function TranslationCard({ item, langLabel, onOpenImage, reviewers, onReview }: Props) {
+export function TranslationCard({
+  item,
+  langLabel,
+  onOpenImage,
+  reviewers,
+  onReview,
+  suggestions,
+  busySuggestionId,
+  onSuggestionStatus,
+  onSuggestionDelete,
+  onAdoptCandidate,
+}: Props) {
   const [expanded, setExpanded] = useState(false);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [adopting, setAdopting] = useState<string | null>(null);
+  const candidates = (item.alternatives ?? []).filter(
+    (alt) => alt.trim() && alt.trim() !== item.tgt_text.trim(),
+  );
+  const adoptedTexts = new Set(
+    suggestions.filter((c) => c.kind === "correction").map((c) => (c.corrected_text ?? "").trim()),
+  );
+  const adopt = async (text: string) => {
+    setAdopting(text);
+    try {
+      await onAdoptCandidate(item, text);
+    } finally {
+      setAdopting(null);
+    }
+  };
+  const corrections = suggestions.filter((c) => c.kind === "correction");
+  const fromPeople = corrections.filter((c) => c.origin !== "llm");
+  const fromAi = corrections.filter((c) => c.origin === "llm");
+  const thumbsUp = suggestions.filter((c) => c.rating === "up").length;
+  const thumbsDown = suggestions.filter((c) => c.rating === "down").length;
+  const undecided = corrections.filter((c) => c.status === "pending").length;
+  const forTraining = corrections.filter((c) => c.status === "accepted").length;
   const [imageFailed, setImageFailed] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewer, setReviewer] = useState<string>(reviewers[0] ?? "");
@@ -71,8 +113,10 @@ export function TranslationCard({ item, langLabel, onOpenImage, reviewers, onRev
     setReviewError(null);
     setReviewResult(null);
     try {
-      setReviewResult(await onReview(item, chosen, onExisting));
+      const outcome = await onReview(item, chosen, onExisting);
+      setReviewResult(outcome);
       setReviewOpen(false);
+      if (outcome.verdict === "fix") setSuggestionsOpen(true);
     } catch (err) {
       setReviewError(err instanceof Error ? err.message : "Review failed.");
     } finally {
@@ -187,18 +231,6 @@ export function TranslationCard({ item, langLabel, onOpenImage, reviewers, onRev
                   </span>
                 </p>
               )}
-              {item.alternatives?.length > 0 && (
-                <div>
-                  <span className="font-semibold">Other candidates the model weighed:</span>
-                  <ul className="mt-1 space-y-0.5">
-                    {item.alternatives.map((alt) => (
-                      <li key={alt} className="font-serif text-sm text-zomi-ink">
-                        {alt}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
               <p>
                 <span className="font-semibold">Logged:</span>{" "}
                 {formatFull(date)}
@@ -266,7 +298,7 @@ export function TranslationCard({ item, langLabel, onOpenImage, reviewers, onRev
                   <span className="font-semibold">{reviewResult.reviewer} suggests a fix</span>
                   {reviewResult.version && reviewResult.version > 1 ? ` (v${reviewResult.version})` : ""}
                   : <span className="font-serif">{reviewResult.corrected}</span>
-                  {reviewResult.note ? ` (${reviewResult.note})` : ""}. Added to Corrections.
+                  {reviewResult.note ? ` (${reviewResult.note})` : ""}. Decide below whether to use it.
                 </>
               ) : reviewResult.verdict === "ok" ? (
                 <>
@@ -283,6 +315,100 @@ export function TranslationCard({ item, langLabel, onOpenImage, reviewers, onRev
           )}
           {reviewError && (
             <p className="mt-2 rounded-lg bg-zomi-red/5 px-3 py-1.5 text-xs text-zomi-red-dark">{reviewError}</p>
+          )}
+
+          {(corrections.length > 0 || thumbsUp + thumbsDown > 0 || candidates.length > 0) && (
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={() => setSuggestionsOpen((v) => !v)}
+                className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-stone-300/50 bg-white/60 px-3 py-1.5 text-left text-xs text-zomi-ink transition hover:bg-white"
+                aria-expanded={suggestionsOpen}
+              >
+                <span className="font-semibold">
+                  {corrections.length === 0
+                    ? thumbsUp + thumbsDown > 0
+                      ? "Feedback"
+                      : "Model candidates"
+                    : `${corrections.length} suggestion${corrections.length === 1 ? "" : "s"}`}
+                </span>
+                {thumbsUp + thumbsDown > 0 && (
+                  <span>👍 {thumbsUp} · 👎 {thumbsDown}</span>
+                )}
+                {fromPeople.length > 0 && (
+                  <span className="text-zomi-gold">{fromPeople.length} from visitors</span>
+                )}
+                {fromAi.length > 0 && (
+                  <span className="text-violet-800">{fromAi.length} from AI</span>
+                )}
+                {candidates.length > 0 && (
+                  <span className="text-zomi-muted">
+                    {candidates.length} other candidate{candidates.length === 1 ? "" : "s"} from the model
+                  </span>
+                )}
+                {undecided > 0 && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900">
+                    {undecided} undecided
+                  </span>
+                )}
+                {forTraining > 0 && (
+                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800">
+                    {forTraining} for training
+                  </span>
+                )}
+                {(corrections.length > 0 || candidates.length > 0) && (
+                  <span className="ml-auto text-zomi-red">{suggestionsOpen ? "Hide" : "Show"}</span>
+                )}
+              </button>
+              {suggestionsOpen && (
+                <div className="mt-2 space-y-3">
+                  {corrections.length > 0 && (
+                    <div className="grid gap-2 md:grid-cols-2">
+                      {corrections.map((c) => (
+                        <SuggestionCard
+                          key={c.id}
+                          item={c}
+                          busy={busySuggestionId === c.id}
+                          onStatus={onSuggestionStatus}
+                          onDelete={onSuggestionDelete}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {candidates.length > 0 && (
+                    <div className="rounded-xl border border-dashed border-stone-300/70 px-3 py-2.5">
+                      <p className="mb-1.5 text-[11px] text-zomi-muted">
+                        The model's other candidates for this sentence, ranked below the
+                        output it chose. Not suggestions from anyone; pick one only if it
+                        is genuinely better.
+                      </p>
+                      <ul className="space-y-1.5">
+                        {candidates.map((alt) => {
+                          const taken = adoptedTexts.has(alt.trim());
+                          return (
+                            <li key={alt} className="flex flex-wrap items-center gap-2">
+                              <span className="font-serif text-sm text-zomi-ink">{alt}</span>
+                              {taken ? (
+                                <span className="text-[11px] text-emerald-800">in suggestions</span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={adopting !== null}
+                                  onClick={() => adopt(alt)}
+                                  className="rounded-full border border-stone-300/60 bg-white px-2.5 py-0.5 text-[11px] text-zomi-ink transition hover:border-emerald-400 hover:text-emerald-800 disabled:opacity-60"
+                                >
+                                  {adopting === alt ? "Saving…" : "Use for training"}
+                                </button>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           )}
 
           <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px]">

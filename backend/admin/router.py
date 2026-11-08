@@ -131,6 +131,53 @@ def _llm_review(value) -> dict | None:
     }
 
 
+def _export_response(rows_iter, columns: list[str], basename: str, fmt: str) -> StreamingResponse:
+    """Stream rows as CSV, a JSON array, or JSON Lines."""
+    import json as _json
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+
+    if fmt == "json":
+        def gen():
+            yield "[\n"
+            first = True
+            for row in rows_iter:
+                yield ("" if first else ",\n") + _json.dumps(
+                    {k: row.get(k) for k in columns}, ensure_ascii=False
+                )
+                first = False
+            yield "\n]\n"
+
+        media, ext = "application/json; charset=utf-8", "json"
+    elif fmt == "jsonl":
+        def gen():
+            for row in rows_iter:
+                yield _json.dumps({k: row.get(k) for k in columns}, ensure_ascii=False) + "\n"
+
+        media, ext = "application/x-ndjson; charset=utf-8", "jsonl"
+    else:
+        def gen():
+            buffer = io.StringIO()
+            writer = csv.DictWriter(buffer, fieldnames=columns, extrasaction="ignore")
+            writer.writeheader()
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+            for row in rows_iter:
+                writer.writerow(row)
+                yield buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate(0)
+
+        media, ext = "text/csv; charset=utf-8", "csv"
+
+    return StreamingResponse(
+        gen(),
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{basename}-{stamp}.{ext}"'},
+    )
+
+
 def _firestore_or_503():
     try:
         return fs.translations_ref()
@@ -259,12 +306,15 @@ def admin_translation(doc_id: str):
 
 
 @router.get("/export.csv", dependencies=[Depends(require_admin)])
-def admin_export_csv(limit: int = Query(default=MAX_EXPORT, ge=1, le=MAX_EXPORT)):
+@router.get("/export", dependencies=[Depends(require_admin)])
+def admin_export(
+    limit: int = Query(default=MAX_EXPORT, ge=1, le=MAX_EXPORT),
+    format: str = Query(default="csv", pattern="^(csv|json|jsonl)$"),
+):
     ref = _firestore_or_503()
     from google.cloud import firestore
 
     query = ref.order_by("created_at", direction=firestore.Query.DESCENDING).limit(limit)
-
     columns = [
         "id",
         "created_at",
@@ -275,31 +325,14 @@ def admin_export_csv(limit: int = Query(default=MAX_EXPORT, ge=1, le=MAX_EXPORT)
         "tgt_text",
         "pivot_english",
         "route",
+        "alternatives",
         "filename",
         "storage_url",
     ]
-
-    def rows():
-        buffer = io.StringIO()
-        writer = csv.DictWriter(buffer, fieldnames=columns, extrasaction="ignore")
-        writer.writeheader()
-        yield buffer.getvalue()
-        buffer.seek(0)
-        buffer.truncate(0)
-        for doc in query.stream():
-            writer.writerow(_serialize(doc))
-            yield buffer.getvalue()
-            buffer.seek(0)
-            buffer.truncate(0)
-
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
-    return StreamingResponse(
-        rows(),
-        media_type="text/csv; charset=utf-8",
-        headers={
-            "Content-Disposition": f'attachment; filename="translations-{stamp}.csv"'
-        },
-    )
+    rows = (_serialize(doc) for doc in query.stream())
+    if format == "csv":
+        rows = ({**r, "alternatives": " | ".join(r.get("alternatives") or [])} for r in rows)
+    return _export_response(rows, columns, "translations", format)
 
 
 # ---------------------------------------------------------------------------
@@ -368,6 +401,54 @@ def admin_corrections(
     return {"items": items, "count": len(items), "truncated": len(docs) >= limit}
 
 
+class CorrectionCreate(BaseModel):
+    translation_id: str
+    corrected_text: str = Field(min_length=1, max_length=1500)
+    comment: str | None = Field(default=None, max_length=500)
+    status: str = Field(default="accepted", pattern="^(pending|accepted|rejected)$")
+
+
+@router.post("/corrections", dependencies=[Depends(require_admin)])
+def admin_add_correction(body: CorrectionCreate):
+    """Admin files a correction for a translation, e.g. promoting one of the
+    model's own beam candidates to a training pair."""
+    translations = _firestore_or_503()
+    corrections = _corrections_ref()
+    from google.cloud import firestore
+
+    snapshot = translations.document(body.translation_id).get()
+    if not snapshot.exists:
+        raise HTTPException(status_code=404, detail="Translation not found.")
+    data = snapshot.to_dict() or {}
+    corrected = body.corrected_text.strip()
+    if corrected == (data.get("tgt_text") or "").strip():
+        raise HTTPException(status_code=400, detail="That is already the model's output.")
+
+    _, ref = corrections.add(
+        {
+            "kind": "correction",
+            "status": body.status,
+            "origin": "admin",
+            "reviewer": None,
+            "confidence": None,
+            "translation_id": body.translation_id,
+            "src_lang": data.get("src_lang"),
+            "tgt_lang": data.get("tgt_lang"),
+            "src_text": data.get("src_text") or "",
+            "model_text": data.get("tgt_text") or "",
+            "corrected_text": corrected,
+            "comment": (body.comment or "").strip() or None,
+            "version": 1,
+            "route": data.get("route"),
+            "pivot_english": data.get("pivot_english"),
+            "rating": None,
+            "created_at": firestore.SERVER_TIMESTAMP,
+            "reviewed_at": firestore.SERVER_TIMESTAMP if body.status != "pending" else None,
+        }
+    )
+    return _serialize_correction(ref.get())
+
+
 class CorrectionReview(BaseModel):
     status: str = Field(pattern="^(pending|accepted|rejected)$")
     corrected_text: str | None = Field(default=None, max_length=3000)
@@ -400,10 +481,12 @@ def admin_delete_correction(doc_id: str):
 
 
 @router.get("/corrections/export.csv", dependencies=[Depends(require_admin)])
+@router.get("/corrections/export", dependencies=[Depends(require_admin)])
 def admin_export_corrections(
     status: str = Query(default="accepted", pattern="^(accepted|pending|rejected|all)$"),
+    format: str = Query(default="csv", pattern="^(csv|json|jsonl)$"),
 ):
-    """Training pairs: source sentence and the human-corrected target."""
+    """Training pairs: source sentence and the human- or AI-corrected target."""
     ref = _corrections_ref()
     from google.cloud.firestore_v1 import FieldFilter
 
@@ -415,6 +498,10 @@ def admin_export_corrections(
         "id",
         "created_at",
         "status",
+        "origin",
+        "reviewer",
+        "version",
+        "confidence",
         "src_lang",
         "tgt_lang",
         "src_text",
@@ -425,28 +512,8 @@ def admin_export_corrections(
         "comment",
         "translation_id",
     ]
-
-    def rows():
-        buffer = io.StringIO()
-        writer = csv.DictWriter(buffer, fieldnames=columns, extrasaction="ignore")
-        writer.writeheader()
-        yield buffer.getvalue()
-        buffer.seek(0)
-        buffer.truncate(0)
-        for doc in query.stream():
-            writer.writerow(_serialize_correction(doc))
-            yield buffer.getvalue()
-            buffer.seek(0)
-            buffer.truncate(0)
-
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
-    return StreamingResponse(
-        rows(),
-        media_type="text/csv; charset=utf-8",
-        headers={
-            "Content-Disposition": f'attachment; filename="corrections-{status}-{stamp}.csv"'
-        },
-    )
+    rows = (_serialize_correction(doc) for doc in query.stream())
+    return _export_response(rows, columns, f"corrections-{status}", format)
 
 
 # ---------------------------------------------------------------------------
