@@ -602,7 +602,7 @@ def admin_test_llm(body: dict = Body(default={})):
 
 
 class ReviewRunIn(BaseModel):
-    limit: int = Field(default=50, ge=1, le=1000)
+    limit: int = Field(default=50, ge=1, le=50000)
     skip_reviewed: bool = True
     tgt_lang: str | None = None
     reviewers: list[str] = Field(default_factory=list, max_length=6)

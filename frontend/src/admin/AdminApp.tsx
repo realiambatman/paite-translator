@@ -9,6 +9,7 @@ import {
   fetchAdminStatus,
   fetchCorrections,
   fetchLlmSettings,
+  fetchReviewStatus,
   fetchStats,
   fetchTranslations,
   reviewCorrection,
@@ -17,6 +18,7 @@ import {
   type CorrectionStatus,
   type ExportFormat,
   type OnExisting,
+  type ReviewStatus,
   loadToken,
   storeToken,
   verifyToken,
@@ -33,7 +35,7 @@ import { ImageLightbox } from "./components/ImageLightbox";
 import { LoginCard } from "./components/LoginCard";
 import { StatsBar } from "./components/StatsBar";
 import { TranslationCard } from "./components/TranslationCard";
-import { dayKey, formatDayHeading, parseDate } from "./format";
+import { dayKey, formatDayHeading, parseDate, reviewProgress } from "./format";
 
 const PAGE_SIZE = 50;
 
@@ -109,6 +111,8 @@ export default function AdminApp() {
   const [corrections, setCorrections] = useState<AdminCorrection[]>([]);
   const [correctionsLoading, setCorrectionsLoading] = useState(false);
   const [busySuggestionId, setBusySuggestionId] = useState<string | null>(null);
+  const [review, setReview] = useState<ReviewStatus | null>(null);
+  const [, setClock] = useState(0);
   const [reviewers, setReviewers] = useState<string[]>([]);
 
   const loadReviewers = useCallback(async (activeToken: string) => {
@@ -131,9 +135,6 @@ export default function AdminApp() {
     window.history.replaceState(null, "", next === "translations" ? "#" : `#${next}`);
   };
 
-  const refreshStats = useCallback(() => {
-    if (token) void loadStatsRef.current(token);
-  }, [token]);
 
   useEffect(() => {
     document.title = "Admin · Zomi Translator";
@@ -350,6 +351,38 @@ export default function AdminApp() {
     void loadPage(token, null, order);
   }, [authed, token, order, loadStats, loadCorrections, loadPage]);
 
+  // The bulk AI review runs on the server; poll it here so progress stays
+  // visible from any tab and survives switching away from the AI review tab.
+  useEffect(() => {
+    if (!authed || !token) return;
+    let cancelled = false;
+    const tick = () =>
+      fetchReviewStatus(token)
+        .then((next) => {
+          if (cancelled) return;
+          setReview((prev) => {
+            if (prev?.status === "running" && next.status !== "running") {
+              void loadStatsRef.current(token);
+              void loadCorrections(token);
+            } else if (next.status === "running" && (next.fix ?? 0) !== (prev?.fix ?? 0)) {
+              // New fixes landed mid-run: keep the Corrections badge current.
+              void loadStatsRef.current(token);
+            }
+            return next;
+          });
+        })
+        .catch(() => undefined);
+    void tick();
+    const timer = window.setInterval(() => {
+      setClock((n) => n + 1); // keeps elapsed time and ETA ticking
+      void tick();
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [authed, token, loadCorrections]);
+
   // Refresh the per-row reviewer list whenever the admin returns to the log,
   // since keys may have been added in the AI review tab meanwhile.
   useEffect(() => {
@@ -488,6 +521,15 @@ export default function AdminApp() {
                   {stats.corrections.pending}
                 </span>
               ) : null}
+              {t.id === "ai" && review?.status === "running" ? (
+                <span
+                  className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${
+                    tab === t.id ? "bg-violet-200 text-violet-900" : "bg-violet-100 text-violet-800"
+                  }`}
+                >
+                  {reviewProgress(review)?.percent ?? 0}%
+                </span>
+              ) : null}
             </button>
           ))}
         </nav>
@@ -540,7 +582,9 @@ export default function AdminApp() {
               token={token}
               languages={languages}
               onAuthError={handleAuthFailure}
-              onChanged={refreshStats}
+              review={review}
+              onReview={setReview}
+              totalTranslations={stats?.total ?? null}
             />
           )}
 

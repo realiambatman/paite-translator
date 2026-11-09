@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Language } from "../../services/api";
 import {
   cancelReview,
   fetchLlmKey,
   fetchLlmSettings,
-  fetchReviewStatus,
   precheckReview,
   startReview,
   testLlm,
@@ -14,16 +13,27 @@ import {
   type ReviewPrecheck,
   type ReviewStatus,
 } from "../api";
-import { formatNumber } from "../format";
+import { formatDuration, formatNumber, reviewProgress } from "../format";
 
 interface Props {
   token: string;
   languages: Language[];
   onAuthError: (err: unknown) => boolean;
-  onChanged: () => void;
+  /** Review job state, polled by the admin shell so it survives tab switches. */
+  review: ReviewStatus | null;
+  onReview: (next: ReviewStatus) => void;
+  /** Total logged translations, for the "All" shortcut. */
+  totalTranslations: number | null;
 }
 
-export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props) {
+export function AiReviewTab({
+  token,
+  languages,
+  onAuthError,
+  review,
+  onReview,
+  totalTranslations,
+}: Props) {
   const [settings, setSettings] = useState<LlmSettings | null>(null);
   const [provider, setProvider] = useState<string>("anthropic");
   const [model, setModel] = useState<string>("");
@@ -37,11 +47,10 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
 
   const [limit, setLimit] = useState(50);
   const [tgtLang, setTgtLang] = useState<string>("");
-  const [review, setReview] = useState<ReviewStatus | null>(null);
+  const setReview = onReview;
   const [starting, setStarting] = useState(false);
   const [reviewers, setReviewers] = useState<string[]>([]);
   const [precheck, setPrecheck] = useState<ReviewPrecheck | null>(null);
-  const pollRef = useRef<number | null>(null);
 
   const applySettings = useCallback((next: LlmSettings) => {
     setSettings(next);
@@ -60,30 +69,7 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
       .catch((err) => {
         if (!onAuthError(err)) setError(err instanceof Error ? err.message : "Could not load settings.");
       });
-    fetchReviewStatus(token).then(setReview).catch(() => undefined);
   }, [token, applySettings, onAuthError]);
-
-  // Poll while a review runs.
-  useEffect(() => {
-    if (review?.status !== "running") {
-      if (pollRef.current) window.clearInterval(pollRef.current);
-      pollRef.current = null;
-      return;
-    }
-    if (pollRef.current) return;
-    pollRef.current = window.setInterval(() => {
-      fetchReviewStatus(token)
-        .then((next) => {
-          setReview(next);
-          if (next.status !== "running") onChanged();
-        })
-        .catch(() => undefined);
-    }, 2000);
-    return () => {
-      if (pollRef.current) window.clearInterval(pollRef.current);
-      pollRef.current = null;
-    };
-  }, [review?.status, token, onChanged]);
 
   const changeProvider = (next: string) => {
     setProvider(next);
@@ -238,8 +224,7 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
   const keyInfo = settings?.keys[provider];
   const providerMeta = settings?.providers[provider];
   const running = review?.status === "running";
-  const progress =
-    review && review.limit ? Math.min(100, Math.round(((review.reviewed ?? 0) / review.limit) * 100)) : 0;
+  const progress = reviewProgress(review);
 
   const inputClass =
     "rounded-xl border border-stone-300/60 bg-white px-3 py-1.5 text-sm text-zomi-ink outline-none transition focus:border-zomi-red/40";
@@ -444,12 +429,26 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
             <input
               type="number"
               min={1}
-              max={1000}
+              max={50000}
               value={limit}
-              onChange={(e) => setLimit(Math.max(1, Math.min(1000, Number(e.target.value) || 1)))}
+              onChange={(e) => setLimit(Math.max(1, Math.min(50000, Number(e.target.value) || 1)))}
               className={`mt-1 block w-28 ${inputClass}`}
             />
           </label>
+          {totalTranslations != null && totalTranslations > 0 && (
+            <button
+              type="button"
+              disabled={running}
+              onClick={() => setLimit(Math.min(50000, totalTranslations))}
+              className={`rounded-full border px-3 py-2 text-xs transition disabled:opacity-50 ${
+                limit === totalTranslations
+                  ? "border-violet-300 bg-violet-100 text-violet-900"
+                  : "border-stone-300/60 bg-zomi-cream text-zomi-ink hover:bg-white"
+              }`}
+            >
+              All {totalTranslations.toLocaleString()}
+            </button>
+          )}
           <label className="text-[11px] text-zomi-muted">
             Target language
             <select
@@ -487,41 +486,72 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
             >
               {starting
                 ? "Starting…"
-                : `Review last ${limit}${reviewers.length > 1 ? ` with ${reviewers.length} models` : ""}`}
+                : `Review ${limit === totalTranslations ? "all" : "last"} ${limit.toLocaleString()}${reviewers.length > 1 ? ` with ${reviewers.length} models` : ""}`}
             </button>
           )}
         </div>
 
-        {review && review.status !== "idle" && (
-          <div className="mt-4 rounded-xl border border-stone-300/50 bg-zomi-cream/70 px-3 py-3 text-xs">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-zomi-muted">
-                {review.status === "running" ? "Reviewing…" : `Review ${review.status}`}
-                {review.current_reviewer
-                  ? ` · ${review.current_reviewer}`
-                  : review.provider
-                    ? ` · ${review.provider}/${review.model}`
+        {limit > 500 && !running && (
+          <p className="mt-2 text-[11px] text-zomi-muted">
+            A run this size takes a while and costs real API money, roughly one model
+            call per 8 entries. It keeps going on the server if you close this page. If
+            the server restarts mid-run, start it again and choose Skip: finished entries
+            are not repeated.
+          </p>
+        )}
+
+        {review && review.status !== "idle" && progress && (
+          <div className="mt-4 rounded-xl border border-stone-300/50 bg-zomi-cream/70 px-4 py-3 text-xs">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className="text-sm text-zomi-ink">
+                <span className="font-serif text-2xl font-semibold tabular-nums">{progress.percent}%</span>{" "}
+                <span className="text-zomi-muted">
+                  {review.status === "running"
+                    ? "reviewing"
+                    : review.status === "done"
+                      ? "finished"
+                      : review.status}
+                  {review.current_reviewer ? ` with ${review.current_reviewer}` : ""}
+                  {(review.models_total ?? 1) > 1
+                    ? ` (model ${(review.model_index ?? 0) + 1} of ${review.models_total})`
                     : ""}
-                {review.reviewers && review.reviewers.length > 1
-                  ? ` (${review.reviewers.indexOf(review.current_reviewer ?? "") + 1} of ${review.reviewers.length})`
+                </span>
+              </p>
+              <p className="tabular-nums text-zomi-muted">
+                {formatNumber(progress.done)} of {formatNumber(progress.total)} entries ·{" "}
+                {formatDuration(progress.elapsedMs)} elapsed
+                {progress.remainingMs != null
+                  ? ` · about ${formatDuration(progress.remainingMs)} left`
                   : ""}
-              </span>
-              <span className="tabular-nums text-zomi-muted">
-                {formatNumber(review.reviewed)} / {formatNumber(review.limit)}
-              </span>
+              </p>
             </div>
-            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-stone-200/80">
+            <div
+              className="mt-2 h-2 overflow-hidden rounded-full bg-stone-200/80"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progress.percent}
+              aria-label="Review progress"
+            >
               <div
-                className="h-full rounded-full bg-zomi-red transition-all"
-                style={{ width: `${progress}%` }}
+                className={`h-full rounded-full transition-all duration-500 ${
+                  review.status === "failed" ? "bg-stone-400" : "bg-zomi-red"
+                }`}
+                style={{ width: `${progress.percent}%` }}
               />
             </div>
-            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
               <Stat label="Looks fine" value={review.ok} tone="text-emerald-800" />
               <Stat label="Fix suggested" value={review.fix} tone="text-zomi-red-dark" />
               <Stat label="Unsure" value={review.unsure} tone="text-amber-900" />
               <Stat label="Skipped" value={review.skipped} tone="text-zomi-muted" />
+              <Stat label="Failed" value={review.failed} tone={review.failed ? "text-zomi-red-dark" : "text-zomi-muted"} />
             </div>
+            {review.failed ? (
+              <p className="mt-2 text-zomi-muted">
+                Failed entries were not stamped. Run again with Skip to retry only those.
+              </p>
+            ) : null}
             {review.replaced ? (
               <p className="mt-2 text-zomi-muted">
                 {review.replaced} older suggestion{review.replaced === 1 ? "" : "s"} replaced.
@@ -529,7 +559,7 @@ export function AiReviewTab({ token, languages, onAuthError, onChanged }: Props)
             ) : null}
             {review.errors && review.errors.length > 0 && (
               <ul className="mt-2 list-disc pl-4 text-zomi-red-dark">
-                {review.errors.slice(-5).map((e, i) => (
+                {review.errors.slice(-3).map((e, i) => (
                   <li key={i}>{e}</li>
                 ))}
               </ul>

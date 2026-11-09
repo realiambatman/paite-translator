@@ -88,3 +88,60 @@ export function timeAgo(date: Date | null, now = new Date()): string {
 export function formatNumber(value: number | null | undefined): string {
   return value == null ? "—" : value.toLocaleString();
 }
+
+
+export interface ReviewProgress {
+  percent: number;
+  /** Entries finished across all models, and the total planned. */
+  done: number;
+  total: number;
+  elapsedMs: number;
+  /** Estimated time left, or null until there is enough signal. */
+  remainingMs: number | null;
+}
+
+export function reviewProgress(
+  review: {
+    status: string;
+    started_at?: string | null;
+    finished_at?: string | null;
+    limit?: number;
+    model_index?: number;
+    models_total?: number;
+    model_done?: number;
+    scan_total?: number | null;
+    reviewed?: number;
+  } | null,
+  now = Date.now(),
+): ReviewProgress | null {
+  if (!review || review.status === "idle" || !review.limit) return null;
+  const models = Math.max(1, review.models_total ?? 1);
+  const perModel = Math.max(1, review.scan_total ?? review.limit);
+  const total = perModel * models;
+  const doneRaw =
+    review.model_done != null
+      ? (review.model_index ?? 0) * perModel + Math.min(review.model_done, perModel)
+      : (review.reviewed ?? 0);
+  const finished = review.status === "done";
+  const done = finished ? total : Math.min(doneRaw, total);
+  const percent = finished ? 100 : Math.min(99, Math.floor((done / total) * 100));
+
+  const started = parseDate(review.started_at ?? null)?.getTime() ?? now;
+  const ended = parseDate(review.finished_at ?? null)?.getTime();
+  const elapsedMs = Math.max(0, (ended ?? now) - started);
+  const remainingMs =
+    review.status === "running" && done >= 8 && elapsedMs > 5000
+      ? Math.round((elapsedMs / done) * (total - done))
+      : null;
+  return { percent, done, total, elapsedMs, remainingMs };
+}
+
+export function formatDuration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} hr ${rest} min` : `${hours} hr`;
+}

@@ -108,6 +108,14 @@ export interface ReviewStatus {
   current_reviewer?: string;
   on_existing?: OnExisting;
   replaced?: number;
+  failed?: number;
+  /** Position of the model currently running (0-based) and how many will run. */
+  model_index?: number;
+  models_total?: number;
+  /** Entries the current model has finished (reviewed, skipped or failed). */
+  model_done?: number;
+  /** Set when fewer entries exist than were asked for. */
+  scan_total?: number | null;
   limit?: number;
   scanned?: number;
   reviewed?: number;

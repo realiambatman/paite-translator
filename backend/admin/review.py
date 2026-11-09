@@ -20,6 +20,8 @@ from . import firestore_client as fs
 from .router import CORRECTIONS_COLLECTION  # noqa: E402  (shared collection name)
 
 BATCH_SIZE = 8
+PAGE_SIZE = 200
+MAX_LIMIT = 50000
 
 SYSTEM = """You are a careful bilingual reviewer for a machine-translation service that
 translates between English, Paite (a Zomi language of Manipur/Mizoram, also called
@@ -89,14 +91,32 @@ class ReviewJob:
         from google.cloud.firestore_v1 import FieldFilter
 
         translations = fs.get_client().collection(fs.TRANSLATIONS_COLLECTION)
-        query = translations.order_by("created_at", direction=firestore.Query.DESCENDING)
+        base = translations.order_by("created_at", direction=firestore.Query.DESCENDING)
         if tgt_lang:
-            query = translations.where(filter=FieldFilter("tgt_lang", "==", tgt_lang))
-        out = []
-        for doc in query.limit(limit).stream():
-            data = doc.to_dict() or {}
-            if (data.get("src_text") or "").strip() and (data.get("tgt_text") or "").strip():
-                out.append({"id": doc.id, **data})
+            base = translations.where(filter=FieldFilter("tgt_lang", "==", tgt_lang))
+        out: list[dict] = []
+        seen = 0
+        last = None
+        while seen < limit:
+            page = base.limit(min(PAGE_SIZE * 2, limit - seen))
+            if last is not None:
+                page = page.start_after(last)
+            docs = list(page.stream())
+            if not docs:
+                break
+            last = docs[-1]
+            for doc in docs:
+                seen += 1
+                data = doc.to_dict() or {}
+                if (data.get("src_text") or "").strip() and (data.get("tgt_text") or "").strip():
+                    # Keep only what precheck needs; full text of thousands of rows is wasteful.
+                    out.append(
+                        {
+                            "id": doc.id,
+                            "llm_review": data.get("llm_review"),
+                            "llm_reviews": data.get("llm_reviews"),
+                        }
+                    )
         return out
 
     def precheck(self, *, limit: int, tgt_lang: str | None, reviewers: list[str] | None) -> dict:
@@ -142,7 +162,12 @@ class ReviewJob:
                 "model": configs[0].model,
                 "limit": limit,
                 "on_existing": on_existing,
+                "models_total": len(configs),
+                "model_index": 0,
+                "model_done": 0,
+                "scan_total": None,
                 "scanned": 0,
+                "failed": 0,
                 "replaced": 0,
                 "reviewed": 0,
                 "ok": 0,
@@ -162,13 +187,15 @@ class ReviewJob:
         return self.snapshot()
 
     def _run_all(self, configs, limit, on_existing, tgt_lang) -> None:
-        for config in configs:
+        for index, config in enumerate(configs):
             if self.snapshot().get("cancel"):
                 break
             self._update(
                 current_reviewer=llm_provider.reviewer_id(config),
                 provider=config.provider,
                 model=config.model,
+                model_index=index,
+                model_done=0,
                 scanned=0,
             )
             self._run(config, limit, on_existing, tgt_lang)
@@ -184,6 +211,9 @@ class ReviewJob:
 
     # ----------------------------------------------------------------- worker
     def _run(self, config: llm_provider.LLMConfig, limit: int, on_existing: str, tgt_lang: str | None) -> None:
+        """Look at the newest `limit` translations and review the ones this model
+        should see. Reads Firestore in pages so a run lasting hours never holds
+        one query stream open."""
         try:
             from google.cloud import firestore
             from google.cloud.firestore_v1 import FieldFilter
@@ -192,40 +222,57 @@ class ReviewJob:
             translations = db.collection(fs.TRANSLATIONS_COLLECTION)
             corrections = db.collection(CORRECTIONS_COLLECTION)
 
-            query = translations.order_by("created_at", direction=firestore.Query.DESCENDING)
+            base = translations.order_by("created_at", direction=firestore.Query.DESCENDING)
             if tgt_lang:
-                query = translations.where(filter=FieldFilter("tgt_lang", "==", tgt_lang))
+                base = translations.where(filter=FieldFilter("tgt_lang", "==", tgt_lang))
 
-            batch: list[dict] = []
-            fetched = 0
-            taken = 0
             skip_reviewed = on_existing == "skip"
-            # Over-fetch so skipped (already reviewed) items still let us reach `limit`.
-            for doc in query.limit(limit * 3 if skip_reviewed else limit).stream():
-                if self.snapshot().get("cancel"):
+            batch: list[dict] = []
+            scanned = 0
+            last = None
+
+            def done(n: int) -> None:
+                self._update(model_done=self.snapshot().get("model_done", 0) + n)
+
+            while scanned < limit and not self.snapshot().get("cancel"):
+                page = base.limit(min(PAGE_SIZE, limit - scanned))
+                if last is not None:
+                    page = page.start_after(last)
+                docs = list(page.stream())
+                if not docs:
                     break
-                if taken >= limit:
-                    break
-                data = doc.to_dict() or {}
-                fetched += 1
-                self._update(scanned=fetched)
-                previous = previous_review(data, config)
-                if previous and skip_reviewed:
-                    self._update(skipped=self.snapshot()["skipped"] + 1)
-                    continue
-                if previous:
-                    data["_previous_version"] = int(previous.get("version") or 1)
-                    data["_replace"] = on_existing == "replace"
-                if not (data.get("src_text") or "").strip() or not (data.get("tgt_text") or "").strip():
-                    self._update(skipped=self.snapshot()["skipped"] + 1)
-                    continue
-                batch.append({"id": doc.id, **data})
-                taken += 1
-                if len(batch) >= BATCH_SIZE:
-                    self._review_batch(config, batch, translations, corrections)
-                    batch = []
+                last = docs[-1]
+
+                for doc in docs:
+                    if self.snapshot().get("cancel"):
+                        break
+                    data = doc.to_dict() or {}
+                    scanned += 1
+                    self._update(scanned=scanned)
+                    previous = previous_review(data, config)
+                    if previous and skip_reviewed:
+                        self._update(skipped=self.snapshot()["skipped"] + 1)
+                        done(1)
+                        continue
+                    if previous:
+                        data["_previous_version"] = int(previous.get("version") or 1)
+                        data["_replace"] = on_existing == "replace"
+                    if not (data.get("src_text") or "").strip() or not (data.get("tgt_text") or "").strip():
+                        self._update(skipped=self.snapshot()["skipped"] + 1)
+                        done(1)
+                        continue
+                    batch.append({"id": doc.id, **data})
+                    if len(batch) >= BATCH_SIZE:
+                        self._review_batch(config, batch, translations, corrections)
+                        done(len(batch))
+                        batch = []
+
             if batch and not self.snapshot().get("cancel"):
                 self._review_batch(config, batch, translations, corrections)
+                done(len(batch))
+            # Fewer entries exist than were asked for: the run is still complete.
+            if not self.snapshot().get("cancel"):
+                self._update(scan_total=scanned)
         except Exception as exc:  # keep the job state informative
             errors = self.snapshot().get("errors", [])
             self._update(
@@ -238,8 +285,13 @@ class ReviewJob:
         try:
             by_id = ask_model(config, batch)
         except Exception as exc:
-            errors = self.snapshot().get("errors", [])
-            self._update(errors=[*errors, f"batch failed: {exc}"][-20:])
+            snap = self.snapshot()
+            self._update(
+                errors=[*snap.get("errors", []), f"batch of {len(batch)} failed: {exc}"][-20:],
+                failed=snap.get("failed", 0) + len(batch),
+            )
+            # Back off a little so a rate limit or outage does not burn the whole run.
+            time.sleep(min(30.0, 2.0 * (1 + snap.get("failed", 0) // BATCH_SIZE)))
             return
 
         for item in batch:
@@ -401,9 +453,18 @@ def record_verdict(
         "note": note,
         "version": version,
     }
+    per_model = {key: review}
+    # Carry an old single-stamp review into the per-model map before `llm_review`
+    # is overwritten, so that model still knows it has seen this entry.
+    legacy = item.get("llm_review")
+    if isinstance(legacy, dict):
+        legacy_id = legacy.get("reviewer") or f"{legacy.get('provider')}/{legacy.get('model')}"
+        legacy_key = llm_provider.reviewer_key(legacy_id)
+        if legacy_key != key and legacy_key not in (item.get("llm_reviews") or {}):
+            per_model[legacy_key] = {**legacy, "reviewer": legacy_id}
     try:
         translations.document(item["id"]).set(
-            {"llm_review": review, "llm_reviews": {key: review}},
+            {"llm_review": review, "llm_reviews": per_model},
             merge=True,
         )
     except Exception as exc:
