@@ -24,7 +24,13 @@ PROVIDERS: dict[str, dict] = {
     "anthropic": {
         "label": "Claude (Anthropic)",
         "default_model": "claude-opus-5-5",
-        "models": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-4-8"],
+        "models": [
+            "claude-opus-5-5",
+            "claude-fable-5-2",
+            "claude-sonnet-5-5",
+            "claude-haiku-5-5",
+            "claude-opus-4-8",
+        ],
         "env_key": "ANTHROPIC_API_KEY",
     },
     "openai": {
