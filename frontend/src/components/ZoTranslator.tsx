@@ -15,6 +15,7 @@ export function ZoTranslator() {
   const [extra, setExtra] = useState<string[]>([]);
   const [results, setResults] = useState<ZoResult[]>([]);
   const [logIds, setLogIds] = useState<Record<string, string | null>>({});
+  const [picked, setPicked] = useState<Record<string, string>>({});   // a candidate the visitor chose instead
   const [lastSource, setLastSource] = useState("");
   const [seconds, setSeconds] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -75,6 +76,7 @@ export function ZoTranslator() {
       setSeconds(r.seconds);
       setLastSource(text);
       setLogIds({});
+      setPicked({});
       // each language is logged on its own, so it can be rated and corrected on its own in the admin panel
       const ids = await Promise.all(
         r.results.map((res) =>
@@ -85,6 +87,7 @@ export function ZoTranslator() {
             tgtText: res.translation.slice(0, 1500),
             route: ZO_ROUTE,
             source: "text",
+            alternatives: res.alternatives ?? [],
           }),
         ),
       );
@@ -206,7 +209,7 @@ export function ZoTranslator() {
             results.map((r) => (
               <div key={r.code}>
                 <p className="text-xs font-semibold uppercase tracking-wide text-zomi-muted">{label(r.code)}</p>
-                <p className="whitespace-pre-wrap text-[1.05rem] leading-relaxed text-zomi-ink">{r.translation}</p>
+                <p className="whitespace-pre-wrap text-[1.05rem] leading-relaxed text-zomi-ink">{picked[r.code] ?? r.translation}</p>
                 <FeedbackPanel
                   key={`${lastSource}::${r.code}::${r.translation}`}
                   result={{
@@ -218,10 +221,10 @@ export function ZoTranslator() {
                     pivotEnglish: null,
                     translationId: logIds[r.code] ?? null,
                   }}
-                  outputText={r.translation}
-                  alternatives={[]}
+                  outputText={picked[r.code] ?? r.translation}
+                  alternatives={r.alternatives ?? []}
                   tgtLabel={label(r.code).split(" (")[0]}
-                  onPickAlternative={() => {}}
+                  onPickAlternative={(alt) => setPicked((cur) => ({ ...cur, [r.code]: alt }))}
                 />
               </div>
             ))

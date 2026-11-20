@@ -38,3 +38,14 @@ try:
     print(f"Zo model download complete: {zo_path}")
 except Exception as exc:  # the site still builds; the model then downloads when the app starts
     print(f"Zo model not downloaded during the build ({type(exc).__name__}); it will load at startup.")
+
+# The same model converted to CTranslate2 int8, which zo_model.py prefers (the PyTorch copy above is the fallback)
+ZO_CT2_PATH_FILE = Path(os.environ.get("ZO_CT2_PATH_FILE", "/app/.zo_ct2_path"))
+zo_ct2_repo = os.environ.get("ZO_CT2_MODEL_REPO", "sensix-zo/zo-translate-own-125m-ct2")
+try:
+    zo_ct2_path = snapshot_download(repo_id=zo_ct2_repo, token=token)
+    ZO_CT2_PATH_FILE.write_text(zo_ct2_path, encoding="utf-8")
+    print(f"Zo CTranslate2 model download complete: {zo_ct2_path}")
+except Exception as exc:  # the site still builds; the app then uses the PyTorch copy
+    print(f"Zo CTranslate2 model not downloaded during the build ({type(exc).__name__}); "
+          "the PyTorch copy will be used.")

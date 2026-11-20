@@ -382,6 +382,8 @@ export interface ZoResult {
   code: string;
   label: string;
   translation: string;
+  /** Other candidates from the beam search (main language only). */
+  alternatives?: string[];
 }
 
 export function fetchZoStatus(): Promise<ZoStatus> {
