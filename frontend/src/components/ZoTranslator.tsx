@@ -83,7 +83,7 @@ export function ZoTranslator() {
         : "Loading the model…";
 
   return (
-    <div className="mt-5 overflow-hidden rounded-2xl border border-stone-300/60 bg-zomi-paper shadow-[0_1px_0_rgb(28_25_23/0.04),0_12px_32px_-16px_rgb(28_25_23/0.18)]">
+    <div className="mt-3 overflow-hidden rounded-2xl border border-stone-300/60 bg-zomi-paper shadow-[0_1px_0_rgb(28_25_23/0.04),0_12px_32px_-16px_rgb(28_25_23/0.18)]">
       <div ref={extraRef} className="relative flex flex-col gap-3 border-b border-stone-300/50 px-4 py-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-zomi-muted">Translate to</p>

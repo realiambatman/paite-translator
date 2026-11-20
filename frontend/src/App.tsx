@@ -611,9 +611,9 @@ export default function App() {
 
         <div className="zomi-puan h-[14px] rounded-sm" aria-hidden />
 
-        <nav className="mt-4 flex gap-1 text-sm" aria-label="Translator">
+        <nav className="mt-5 flex gap-1 border-b border-stone-300/70 text-sm" role="tablist" aria-label="Translator">
           {([
-            ["paite", "Paite translator"],
+            ["paite", "Paite translator (fine-tuned)"],
             ["zo", "Zo languages (our own model)"],
           ] as const).map(([key, title]) => (
             <button
@@ -623,9 +623,12 @@ export default function App() {
                 setMode(key);
                 window.history.replaceState(null, "", key === "zo" ? "#zo" : location.pathname + location.search);
               }}
-              aria-current={mode === key ? "page" : undefined}
-              className={`rounded-full px-4 py-1.5 transition ${
-                mode === key ? "bg-zomi-ink text-white" : "text-zomi-ink hover:bg-white"
+              role="tab"
+              aria-selected={mode === key}
+              className={`-mb-px rounded-t-xl border px-4 py-2 transition ${
+                mode === key
+                  ? "border-stone-300/70 border-b-zomi-cream bg-zomi-cream font-semibold text-zomi-ink"
+                  : "border-transparent text-zomi-muted hover:bg-white/60 hover:text-zomi-ink"
               }`}
             >
               {title}
@@ -637,7 +640,7 @@ export default function App() {
 
         <div className={mode === "zo" ? "hidden" : undefined}>
 
-        <div className="mt-5 overflow-hidden rounded-2xl border border-stone-300/60 bg-zomi-paper shadow-[0_1px_0_rgb(28_25_23/0.04),0_12px_32px_-16px_rgb(28_25_23/0.18)]">
+        <div className="mt-3 overflow-hidden rounded-2xl border border-stone-300/60 bg-zomi-paper shadow-[0_1px_0_rgb(28_25_23/0.04),0_12px_32px_-16px_rgb(28_25_23/0.18)]">
           <div className="flex flex-col gap-2 border-b border-stone-300/50 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-3 sm:px-4">
             <div className="flex min-w-0 flex-1 items-center gap-1">
               <LanguageSelect
