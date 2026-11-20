@@ -28,3 +28,13 @@ else:
 
 MODEL_PATH_FILE.write_text(model_path, encoding="utf-8")
 print(f"Model download complete ({backend}): {model_path}")
+
+# Our own model for English and the Zo languages (zo_model.py)
+ZO_MODEL_PATH_FILE = Path(os.environ.get("ZO_MODEL_PATH_FILE", "/app/.zo_model_path"))
+zo_repo = os.environ.get("ZO_MODEL_REPO", "sensix-zo/zo-translate-own-125m")
+try:
+    zo_path = snapshot_download(repo_id=zo_repo, token=token)
+    ZO_MODEL_PATH_FILE.write_text(zo_path, encoding="utf-8")
+    print(f"Zo model download complete: {zo_path}")
+except Exception as exc:  # the site still builds; the model then downloads when the app starts
+    print(f"Zo model not downloaded during the build ({type(exc).__name__}); it will load at startup.")

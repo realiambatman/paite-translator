@@ -362,3 +362,36 @@ export function translateFileStream(
       .catch(reject);
   });
 }
+
+// ---- Our own model for English and the Zo languages (backend/zo_model.py) ----
+export interface ZoLanguage {
+  code: string;
+  label: string;
+  little_data: boolean;
+}
+
+export interface ZoStatus {
+  ready: boolean;
+  error: string | null;
+  languages: ZoLanguage[];
+  default_target: string;
+  default_extra: string[];
+}
+
+export interface ZoResult {
+  code: string;
+  label: string;
+  translation: string;
+}
+
+export function fetchZoStatus(): Promise<ZoStatus> {
+  return request<ZoStatus>("/api/zo/status");
+}
+
+export function translateZo(text: string, target: string, extra: string[]): Promise<{ results: ZoResult[]; seconds: number }> {
+  return request("/api/zo/translate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, target, extra }),
+  });
+}

@@ -1,7 +1,7 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 torch>=2.2.0
-transformers>=4.46.0
+transformers>=5.0  # the Zo model (zo_model.py) is saved with transformers 5
 accelerate>=1.2.0
 bitsandbytes>=0.45.0
 huggingface-hub>=0.27.0

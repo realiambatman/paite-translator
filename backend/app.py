@@ -15,6 +15,7 @@ from simplify import is_available as simplify_available, simplify_english
 from static_files import SpaStaticFiles
 from limits import MAX_TRANSLATION_TOKENS, max_chars_for_tokens
 from translation import TranslationEngine
+from zo_model import DEFAULT_EXTRA as ZO_DEFAULT_EXTRA, DEFAULT_TARGET as ZO_DEFAULT_TARGET, load_in_background as zo_load, zo
 
 engine = TranslationEngine()
 
@@ -34,6 +35,7 @@ async def lifespan(_: FastAPI):
         print(f"Failed to load model: {exc}", flush=True)
     else:
         print("API ready to serve.", flush=True)
+    zo_load()   # our own Zo-languages model, loaded alongside without delaying the site
     yield
 
 
@@ -113,6 +115,31 @@ class SimplifyRequest(BaseModel):
 
 class SimplifyResponse(BaseModel):
     text: str
+
+
+class ZoTranslateRequest(BaseModel):
+    text: str = Field(default="", max_length=max_chars_for_tokens(MAX_TRANSLATION_TOKENS))
+    target: str = ZO_DEFAULT_TARGET
+    extra: list[str] = Field(default_factory=list)
+
+
+@app.get("/api/zo/status")
+def zo_status():
+    """Our own model for English and the Zo languages: whether it is ready, and its languages."""
+    return {"ready": zo.ready, "error": zo.error, "languages": zo.languages(),
+            "default_target": ZO_DEFAULT_TARGET, "default_extra": ZO_DEFAULT_EXTRA}
+
+
+@app.post("/api/zo/translate")
+def zo_translate(body: ZoTranslateRequest):
+    if not zo.ready:
+        raise HTTPException(status_code=503, detail=zo.error or "The Zo model is still loading. Please try again shortly.")
+    if not body.text.strip():
+        return {"results": [], "seconds": 0}
+    try:
+        return zo.translate_many(body.text, body.target, body.extra)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/simplify", response_model=SimplifyResponse)

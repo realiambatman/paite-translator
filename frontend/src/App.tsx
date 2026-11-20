@@ -30,6 +30,7 @@ import { RecentHistory } from "./components/RecentHistory";
 import { fetchGoogleQuota, incrementGoogleQuota } from "./services/googleQuota";
 import { FALLBACK_LANGUAGES } from "./languages";
 import { LanguageSelect } from "./components/LanguageSelect";
+import { ZoTranslator } from "./components/ZoTranslator";
 import { CameraCapture } from "./components/CameraCapture";
 import { ImageCropModal } from "./components/ImageCropModal";
 import { UploadFileModal } from "./components/UploadFileModal";
@@ -70,6 +71,9 @@ function langLabel(languages: Language[], code: LangCode) {
 
 export default function App() {
   const [status, setStatus] = useState<ModelStatus | null>(null);
+  const [mode, setMode] = useState<"paite" | "zo">(() =>
+    typeof location !== "undefined" && location.hash === "#zo" ? "zo" : "paite",
+  );
   const [inputText, setInputText] = useState("");
   const [outputText, setOutputText] = useState("");
   const [srcLang, setSrcLang] = useState<LangCode>("eng_Latn");
@@ -602,6 +606,32 @@ export default function App() {
 
         <div className="zomi-puan h-[14px] rounded-sm" aria-hidden />
 
+        <nav className="mt-4 flex gap-1 text-sm" aria-label="Translator">
+          {([
+            ["paite", "Paite translator"],
+            ["zo", "Zo languages (our own model)"],
+          ] as const).map(([key, title]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => {
+                setMode(key);
+                window.history.replaceState(null, "", key === "zo" ? "#zo" : location.pathname + location.search);
+              }}
+              aria-current={mode === key ? "page" : undefined}
+              className={`rounded-full px-4 py-1.5 transition ${
+                mode === key ? "bg-zomi-ink text-white" : "text-zomi-ink hover:bg-white"
+              }`}
+            >
+              {title}
+            </button>
+          ))}
+        </nav>
+
+        {mode === "zo" && <ZoTranslator />}
+
+        <div className={mode === "zo" ? "hidden" : undefined}>
+
         <div className="mt-5 overflow-hidden rounded-2xl border border-stone-300/60 bg-zomi-paper shadow-[0_1px_0_rgb(28_25_23/0.04),0_12px_32px_-16px_rgb(28_25_23/0.18)]">
           <div className="flex flex-col gap-2 border-b border-stone-300/50 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-3 sm:px-4">
             <div className="flex min-w-0 flex-1 items-center gap-1">
@@ -936,6 +966,8 @@ export default function App() {
           onPick={handleHistoryPick}
           onClear={() => setHistory(clearHistory())}
         />
+
+        </div>
 
         <section className="mt-10 grid gap-6 border-t border-stone-300/50 pt-6 md:grid-cols-[1fr_2fr]">
           <h2 className="font-serif text-xl font-semibold leading-tight text-zomi-ink">
