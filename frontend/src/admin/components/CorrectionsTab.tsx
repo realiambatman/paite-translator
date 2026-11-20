@@ -31,6 +31,7 @@ interface Group {
   srcText: string;
   modelText: string;
   pivotEnglish: string | null;
+  route: string | null;
   newest: Date | null;
   people: AdminCorrection[];
   ai: AdminCorrection[];
@@ -54,6 +55,7 @@ export function groupCorrections(items: AdminCorrection[]): Group[] {
         srcText: item.src_text,
         modelText: item.model_text,
         pivotEnglish: item.pivot_english,
+        route: item.route,
         newest: null,
         people: [],
         ai: [],
@@ -207,6 +209,9 @@ export function CorrectionsTab({
             <span className="font-medium text-zomi-ink">
               {langLabel(group.srcLang)} → <span className="text-zomi-red-dark">{langLabel(group.tgtLang)}</span>
             </span>
+            {group.route === "own-125m" && (
+              <span className="rounded-full bg-zomi-gold/15 px-2 py-0.5 text-zomi-ink">Own model (Zo languages)</span>
+            )}
             {group.thumbsUp + group.thumbsDown > 0 && (
               <span className="rounded-full bg-white px-2 py-0.5 text-zomi-ink">
                 👍 {group.thumbsUp} · 👎 {group.thumbsDown}

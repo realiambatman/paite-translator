@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FALLBACK_LANGUAGES } from "../languages";
-import { fetchStatus, type Language } from "../services/api";
+import { fetchStatus, fetchZoStatus, type Language } from "../services/api";
 import {
   AdminAuthError,
   addCorrection,
@@ -55,6 +55,7 @@ function tabFromHash(): Tab {
 
 const DEFAULT_FILTERS: Filters = {
   query: "",
+  model: "all",
   source: "all",
   pair: "all",
   imagesOnly: false,
@@ -93,6 +94,13 @@ export default function AdminApp() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [languages, setLanguages] = useState<Language[]>(FALLBACK_LANGUAGES);
+  // names of our own model's language codes (pck, lus, ...), which the Zo tab logs
+  const [zoLabels, setZoLabels] = useState<Record<string, string>>({});
+  useEffect(() => {
+    fetchZoStatus()
+      .then((z) => setZoLabels(Object.fromEntries(z.languages.map((l) => [l.code, l.label]))))
+      .catch(() => {});
+  }, []);
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
 
@@ -419,8 +427,12 @@ export default function AdminApp() {
 
   const langLabel = useCallback(
     (code: string | null) =>
-      code ? (languages.find((lang) => lang.code === code)?.label ?? code) : "—",
-    [languages],
+      !code
+        ? "—"
+        : (languages.find((lang) => lang.code === code)?.label ??
+          zoLabels[code] ??
+          (code === "auto" ? "Detected automatically" : code)),
+    [languages, zoLabels],
   );
 
   const pairs = useMemo(() => {
@@ -443,6 +455,9 @@ export default function AdminApp() {
       if (filters.source !== "all" && (item.source ?? "text") !== filters.source) {
         return false;
       }
+      const own = item.route === "own-125m";
+      if (filters.model === "own" && !own) return false;
+      if (filters.model === "paite" && own) return false;
       if (filters.imagesOnly && !item.is_image) return false;
       if (
         filters.pair !== "all" &&

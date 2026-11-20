@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchZoStatus, translateZo, type ZoResult, type ZoStatus } from "../services/api";
+import { saveTranslationLog } from "../services/translationLog";
+import { FeedbackPanel } from "./FeedbackPanel";
+
+// How Zo-tab translations are marked in the translation log and the admin panel.
+export const ZO_ROUTE = "own-125m";
 
 // Our own model for English and the Zo languages. The input language is detected by the model itself,
 // so only the language(s) to translate to are chosen.
@@ -9,6 +14,8 @@ export function ZoTranslator() {
   const [target, setTarget] = useState("pck");
   const [extra, setExtra] = useState<string[]>([]);
   const [results, setResults] = useState<ZoResult[]>([]);
+  const [logIds, setLogIds] = useState<Record<string, string | null>>({});
+  const [lastSource, setLastSource] = useState("");
   const [seconds, setSeconds] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +73,22 @@ export function ZoTranslator() {
       const r = await translateZo(text, target, extraChosen);
       setResults(r.results);
       setSeconds(r.seconds);
+      setLastSource(text);
+      setLogIds({});
+      // each language is logged on its own, so it can be rated and corrected on its own in the admin panel
+      const ids = await Promise.all(
+        r.results.map((res) =>
+          saveTranslationLog({
+            srcLang: "auto",
+            tgtLang: res.code,
+            srcText: text.slice(0, 1000),
+            tgtText: res.translation.slice(0, 1500),
+            route: ZO_ROUTE,
+            source: "text",
+          }),
+        ),
+      );
+      setLogIds(Object.fromEntries(r.results.map((res, i) => [res.code, ids[i]])));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Translation failed. Please try again.");
     } finally {
@@ -184,6 +207,22 @@ export function ZoTranslator() {
               <div key={r.code}>
                 <p className="text-xs font-semibold uppercase tracking-wide text-zomi-muted">{label(r.code)}</p>
                 <p className="whitespace-pre-wrap text-[1.05rem] leading-relaxed text-zomi-ink">{r.translation}</p>
+                <FeedbackPanel
+                  key={`${lastSource}::${r.code}::${r.translation}`}
+                  result={{
+                    srcText: lastSource,
+                    srcLang: "auto",
+                    tgtLang: r.code,
+                    translation: r.translation,
+                    route: ZO_ROUTE,
+                    pivotEnglish: null,
+                    translationId: logIds[r.code] ?? null,
+                  }}
+                  outputText={r.translation}
+                  alternatives={[]}
+                  tgtLabel={label(r.code).split(" (")[0]}
+                  onPickAlternative={() => {}}
+                />
               </div>
             ))
           )}

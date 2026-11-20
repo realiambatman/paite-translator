@@ -1,7 +1,10 @@
 export type SourceFilter = "all" | "text" | "upload" | "camera";
 
+export type ModelFilter = "all" | "paite" | "own";
+
 export interface Filters {
   query: string;
+  model?: ModelFilter;
   source: SourceFilter;
   pair: string;
   imagesOnly: boolean;
@@ -27,6 +30,7 @@ export function FilterBar({ filters, pairs, shown, loaded, onChange }: Props) {
   const active =
     filters.query.trim() !== "" ||
     filters.source !== "all" ||
+    (filters.model ?? "all") !== "all" ||
     filters.pair !== "all" ||
     filters.imagesOnly;
 
@@ -40,6 +44,15 @@ export function FilterBar({ filters, pairs, shown, loaded, onChange }: Props) {
         className="min-w-[200px] flex-1 rounded-full border border-stone-300/60 bg-white px-4 py-1.5 text-sm text-zomi-ink outline-none transition focus:border-zomi-red/40 focus:ring-2 focus:ring-zomi-red/10"
       />
 
+      <select
+        value={filters.model ?? "all"}
+        onChange={(e) => update({ model: e.target.value as ModelFilter })}
+        className="rounded-full border border-stone-300/60 bg-zomi-cream px-3 py-1.5 text-sm text-zomi-ink outline-none transition hover:border-zomi-red/30"
+      >
+        <option value="all">All models</option>
+        <option value="paite">Paite translator (fine-tuned)</option>
+        <option value="own">Own model (Zo languages)</option>
+      </select>
       <select
         value={filters.source}
         onChange={(e) => update({ source: e.target.value as SourceFilter })}

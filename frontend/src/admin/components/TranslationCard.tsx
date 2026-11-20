@@ -41,6 +41,7 @@ const ROUTE_LABELS: Record<string, string> = {
   to_paite: "Google → Paite",
   from_paite: "Paite → Google",
   identity: "Same language",
+  "own-125m": "Own model (Zo languages)",
 };
 
 function Badge({ className, children }: { className: string; children: string }) {
