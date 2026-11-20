@@ -84,7 +84,7 @@ export function ZoTranslator() {
 
   return (
     <div className="mt-5 overflow-hidden rounded-2xl border border-stone-300/60 bg-zomi-paper shadow-[0_1px_0_rgb(28_25_23/0.04),0_12px_32px_-16px_rgb(28_25_23/0.18)]">
-      <div className="flex flex-col gap-3 border-b border-stone-300/50 px-4 py-3 sm:flex-row sm:items-end sm:justify-between">
+      <div ref={extraRef} className="relative flex flex-col gap-3 border-b border-stone-300/50 px-4 py-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-zomi-muted">Translate to</p>
           <span className="relative inline-flex min-w-0 items-center">
@@ -103,7 +103,7 @@ export function ZoTranslator() {
             <span className="pointer-events-none absolute right-2 text-zomi-muted">▾</span>
           </span>
         </div>
-        <div className="relative min-w-0" ref={extraRef}>
+        <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-zomi-muted">Also translate into</p>
           <button
             type="button"
@@ -118,23 +118,31 @@ export function ZoTranslator() {
             <span className="shrink-0 text-zomi-muted">▾</span>
           </button>
           {showExtra && (
-            <div className="absolute right-0 z-20 mt-1 max-h-72 w-64 overflow-auto rounded-xl border border-stone-300/70 bg-white py-1 shadow-lg">
+            <div className="absolute inset-x-3 top-full z-20 mt-1 grid grid-cols-2 gap-x-2 rounded-xl border border-stone-300/70 bg-white p-2 shadow-lg sm:grid-cols-3 lg:grid-cols-5">
               {languages
                 .filter((l) => l.code !== target)
                 .map((l) => (
-                  <label key={l.code} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-zomi-paper">
+                  <label key={l.code} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 text-sm hover:bg-zomi-paper">
                     <input
                       type="checkbox"
                       checked={extra.includes(l.code)}
                       onChange={() => toggle(l.code)}
                       className="accent-zomi-red"
                     />
-                    <span className={l.little_data ? "text-zomi-muted" : "text-zomi-ink"}>{label(l.code)}</span>
+                    <span className={`truncate ${l.little_data ? "text-zomi-muted" : "text-zomi-ink"}`} title={label(l.code)}>
+                      {l.label}{l.little_data ? " *" : ""}
+                    </span>
                   </label>
                 ))}
+              {languages.some((l) => l.little_data) && (
+                <p className="col-span-full px-2 pt-1 text-xs text-zomi-muted">* very little training data: output is a rough guess</p>
+              )}
             </div>
           )}
         </div>
+        {showExtra && languages.some((l) => l.little_data) && (
+          <p className="sr-only">Languages marked with a star had very little training data.</p>
+        )}
       </div>
 
       {error && (

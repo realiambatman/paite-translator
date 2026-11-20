@@ -74,6 +74,11 @@ export default function App() {
   const [mode, setMode] = useState<"paite" | "zo">(() =>
     typeof location !== "undefined" && location.hash === "#zo" ? "zo" : "paite",
   );
+  useEffect(() => {   // a #zo link opened on a page that is already loaded switches the tab too
+    const sync = () => setMode(location.hash === "#zo" ? "zo" : "paite");
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
   const [inputText, setInputText] = useState("");
   const [outputText, setOutputText] = useState("");
   const [srcLang, setSrcLang] = useState<LangCode>("eng_Latn");
