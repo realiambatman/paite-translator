@@ -154,6 +154,24 @@ export interface TranslationsPage {
   items: AdminTranslation[];
   next_cursor: string | null;
   has_more: boolean;
+  /** Set when filters or a search are active: the server searched every entry. */
+  next_offset?: number | null;
+  total_matches?: number;
+}
+
+/** Search and filters, applied by the server across the whole log. */
+export interface TranslationQuery {
+  q?: string;
+  model?: string;
+  source?: string;
+  pair?: string;
+  images?: boolean;
+  offset?: number;
+}
+
+export interface TranslationFacets {
+  pairs: { value: string; count: number }[];
+  models: { paite: number; own: number };
 }
 
 export class AdminAuthError extends Error {
@@ -223,16 +241,27 @@ export function fetchStats(token: string): Promise<AdminStats> {
 
 export function fetchTranslations(
   token: string,
-  options: { limit?: number; cursor?: string | null; order?: "created_at" | "id" } = {},
+  options: { limit?: number; cursor?: string | null; order?: "created_at" | "id"; fresh?: boolean } & TranslationQuery = {},
 ): Promise<TranslationsPage> {
   const params = new URLSearchParams();
   params.set("limit", String(options.limit ?? 50));
   params.set("order", options.order ?? "created_at");
   if (options.cursor) params.set("cursor", options.cursor);
+  if (options.q?.trim()) params.set("q", options.q.trim());
+  if (options.model && options.model !== "all") params.set("model", options.model);
+  if (options.source && options.source !== "all") params.set("source", options.source);
+  if (options.pair && options.pair !== "all") params.set("pair", options.pair);
+  if (options.images) params.set("images", "true");
+  if (options.offset) params.set("offset", String(options.offset));
+  if (options.fresh) params.set("fresh", "true");
   return adminJson<TranslationsPage>(
     `/api/admin/translations?${params.toString()}`,
     token,
   );
+}
+
+export function fetchTranslationFacets(token: string, fresh = false): Promise<TranslationFacets> {
+  return adminJson<TranslationFacets>(`/api/admin/translations/facets${fresh ? "?fresh=true" : ""}`, token);
 }
 
 export type ExportFormat = "csv" | "json" | "jsonl";

@@ -267,12 +267,76 @@ def admin_stats():
     }
 
 
+OWN_MODEL_ROUTE = "own-125m"          # translations from our own Zo-languages model (the Zo tab)
+ALL_DOCS_TTL_SECONDS = 120            # filtering reads every entry; keep them briefly so typing does not re-read
+_all_docs: dict[str, Any] = {"t": 0.0, "docs": []}
+_all_docs_lock = threading.Lock()
+
+
+def _all_translation_docs(fresh: bool = False) -> list:
+    """Every translation entry, newest first, kept for a short while (search and filters cover all of them)."""
+    with _all_docs_lock:
+        if not fresh and _all_docs["docs"] and time.time() - _all_docs["t"] < ALL_DOCS_TTL_SECONDS:
+            return _all_docs["docs"]
+        ref = _firestore_or_503()
+        from google.cloud import firestore
+
+        try:
+            docs = list(ref.order_by("created_at", direction=firestore.Query.DESCENDING).stream())
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Firestore read failed: {exc}") from exc
+        _all_docs.update(t=time.time(), docs=docs)
+        return docs
+
+
+def _matches(data: dict, q: str, model: str, source: str, pair: str, images: bool) -> bool:
+    route = data.get("route")
+    if model == "own" and route != OWN_MODEL_ROUTE:
+        return False
+    if model == "paite" and route == OWN_MODEL_ROUTE:
+        return False
+    if source != "all" and (data.get("source") or "text") != source:
+        return False
+    if pair and pair != "all" and f"{data.get('src_lang') or '?'}→{data.get('tgt_lang') or '?'}" != pair:
+        return False
+    if images:
+        url = data.get("storage_url") or None
+        if not (url and _is_image(data.get("filename") or None, url)):
+            return False
+    if q:
+        hay = " ".join(str(data.get(k) or "") for k in ("src_text", "tgt_text", "pivot_english", "filename")).lower()
+        if q not in hay:
+            return False
+    return True
+
+
 @router.get("/translations", dependencies=[Depends(require_admin)])
 def admin_translations(
     limit: int = Query(default=50, ge=1, le=MAX_PAGE),
     cursor: str | None = Query(default=None, description="id of the last item seen"),
     order: str = Query(default="created_at", pattern="^(created_at|id)$"),
+    q: str = Query(default="", max_length=200, description="search text, translation, English step or filename"),
+    model: str = Query(default="all", pattern="^(all|paite|own)$"),
+    source: str = Query(default="all", pattern="^(all|text|upload|camera)$"),
+    pair: str = Query(default="all", max_length=60),
+    images: bool = False,
+    offset: int = Query(default=0, ge=0, description="with filters: how many matches were already shown"),
+    fresh: bool = False,
 ):
+    q = q.strip().lower()
+    filtering = bool(q) or model != "all" or source != "all" or (pair and pair != "all") or images
+    if filtering:   # over every entry, not just a page: the result is what matches anywhere in the log
+        docs = _all_translation_docs(fresh)
+        hits = [d for d in docs if _matches(d.to_dict() or {}, q, model, source, pair, images)]
+        page = hits[offset:offset + limit]
+        return {
+            "items": [_serialize(doc) for doc in page],
+            "next_cursor": None,
+            "next_offset": offset + len(page) if offset + len(page) < len(hits) else None,
+            "has_more": offset + len(page) < len(hits),
+            "total_matches": len(hits),
+        }
+
     ref = _firestore_or_503()
     from google.cloud import firestore
 
@@ -301,6 +365,20 @@ def admin_translations(
         "next_cursor": docs[-1].id if has_more and docs else None,
         "has_more": has_more,
     }
+
+
+@router.get("/translations/facets", dependencies=[Depends(require_admin)])
+def admin_translation_facets(fresh: bool = False):
+    """Language pairs and models across the whole log, for the filter menus."""
+    pairs: dict[str, int] = {}
+    models = {"paite": 0, "own": 0}
+    for doc in _all_translation_docs(fresh):
+        data = doc.to_dict() or {}
+        key = f"{data.get('src_lang') or '?'}→{data.get('tgt_lang') or '?'}"
+        pairs[key] = pairs.get(key, 0) + 1
+        models["own" if data.get("route") == OWN_MODEL_ROUTE else "paite"] += 1
+    return {"pairs": sorted(({"value": k, "count": v} for k, v in pairs.items()), key=lambda x: -x["count"]),
+            "models": models}
 
 
 @router.get("/translations/{doc_id}", dependencies=[Depends(require_admin)])

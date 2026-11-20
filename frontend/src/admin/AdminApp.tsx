@@ -12,6 +12,8 @@ import {
   fetchReviewStatus,
   fetchStats,
   fetchTranslations,
+  fetchTranslationFacets,
+  type TranslationFacets,
   reviewCorrection,
   reviewTranslation,
   type AdminCorrection,
@@ -112,6 +114,18 @@ export default function AdminApp() {
   const [order, setOrder] = useState<"created_at" | "id">("created_at");
 
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  // Search and filters run on the server over every entry; these follow the pages of matches.
+  const filtersRef = useRef<Filters>(DEFAULT_FILTERS);
+  filtersRef.current = filters;
+  const [matchOffset, setMatchOffset] = useState<number | null>(null);
+  const [totalMatches, setTotalMatches] = useState<number | null>(null);
+  const [facets, setFacets] = useState<TranslationFacets | null>(null);
+  const filtersActive =
+    filters.query.trim() !== "" ||
+    (filters.model ?? "all") !== "all" ||
+    filters.source !== "all" ||
+    filters.pair !== "all" ||
+    filters.imagesOnly;
   const [lightbox, setLightbox] = useState<{ src: string; title: string | null } | null>(
     null,
   );
@@ -192,17 +206,34 @@ export default function AdminApp() {
   );
 
   const loadPage = useCallback(
-    async (activeToken: string, nextCursor: string | null, activeOrder: "created_at" | "id") => {
+    async (
+      activeToken: string,
+      nextCursor: string | null,
+      activeOrder: "created_at" | "id",
+      nextOffset = 0,
+      fresh = false,
+    ) => {
       setListLoading(true);
       setListError(null);
+      const f = filtersRef.current;
       try {
         const page = await fetchTranslations(activeToken, {
           limit: PAGE_SIZE,
           cursor: nextCursor,
           order: activeOrder,
+          q: f.query,
+          model: f.model ?? "all",
+          source: f.source,
+          pair: f.pair,
+          images: f.imagesOnly,
+          offset: nextOffset,
+          fresh,
         });
+        if (filtersRef.current !== f) return;   // the filters changed while this page was loading
+        setMatchOffset(page.next_offset ?? null);
+        setTotalMatches(page.total_matches ?? null);
         setItems((prev) => {
-          if (!nextCursor) return page.items;
+          if (!nextCursor && !nextOffset) return page.items;
           const seen = new Set(prev.map((item) => item.id));
           return [...prev, ...page.items.filter((item) => !seen.has(item.id))];
         });
@@ -314,14 +345,40 @@ export default function AdminApp() {
     return map;
   }, [corrections]);
 
+  const loadFacets = useCallback(
+    (activeToken: string, fresh = false) =>
+      fetchTranslationFacets(activeToken, fresh)
+        .then(setFacets)
+        .catch(() => {}),
+    [],
+  );
+
   const refresh = useCallback(() => {
     if (!token) return;
     setItems([]);
     setCursor(null);
     void loadStats(token);
     void loadCorrections(token);
-    void loadPage(token, null, order);
-  }, [token, order, loadStats, loadCorrections, loadPage]);
+    void loadPage(token, null, order, 0, true);
+    void loadFacets(token, true);
+  }, [token, order, loadStats, loadCorrections, loadPage, loadFacets]);
+
+  // A change of search or filters asks the server again (after a short pause while typing).
+  const firstFilterRun = useRef(true);
+  useEffect(() => {
+    if (firstFilterRun.current) {
+      firstFilterRun.current = false;
+      return;
+    }
+    if (!authed || !token) return;
+    const t = setTimeout(() => {
+      setItems([]);
+      setCursor(null);
+      void loadPage(token, null, order, 0);
+    }, 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters]);
 
   // Auto sign-in with a remembered token.
   useEffect(() => {
@@ -357,7 +414,8 @@ export default function AdminApp() {
     void loadStats(token);
     void loadCorrections(token);
     void loadPage(token, null, order);
-  }, [authed, token, order, loadStats, loadCorrections, loadPage]);
+    void loadFacets(token);
+  }, [authed, token, order, loadStats, loadCorrections, loadPage, loadFacets]);
 
   // The bulk AI review runs on the server; poll it here so progress stays
   // visible from any tab and survives switching away from the AI review tab.
@@ -435,51 +493,16 @@ export default function AdminApp() {
     [languages, zoLabels],
   );
 
-  const pairs = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const item of items) {
-      const key = `${item.src_lang ?? "?"}→${item.tgt_lang ?? "?"}`;
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
-    return [...counts.entries()]
-      .map(([value, count]) => {
+  const pairs = useMemo(
+    () =>
+      (facets?.pairs ?? []).map(({ value, count }) => {
         const [src, tgt] = value.split("→");
         return { value, count, label: `${langLabel(src)} → ${langLabel(tgt)}` };
-      })
-      .sort((a, b) => b.count - a.count);
-  }, [items, langLabel]);
+      }),
+    [facets, langLabel],
+  );
 
-  const filtered = useMemo(() => {
-    const query = filters.query.trim().toLowerCase();
-    return items.filter((item) => {
-      if (filters.source !== "all" && (item.source ?? "text") !== filters.source) {
-        return false;
-      }
-      const own = item.route === "own-125m";
-      if (filters.model === "own" && !own) return false;
-      if (filters.model === "paite" && own) return false;
-      if (filters.imagesOnly && !item.is_image) return false;
-      if (
-        filters.pair !== "all" &&
-        `${item.src_lang ?? "?"}→${item.tgt_lang ?? "?"}` !== filters.pair
-      ) {
-        return false;
-      }
-      if (query) {
-        const haystack = [
-          item.src_text,
-          item.tgt_text,
-          item.pivot_english ?? "",
-          item.filename ?? "",
-          item.id,
-        ]
-          .join("\n")
-          .toLowerCase();
-        if (!haystack.includes(query)) return false;
-      }
-      return true;
-    });
-  }, [items, filters]);
+  const filtered = items;   // the server applied the search and filters to the whole log
 
   const groups = useMemo(() => groupByDay(filtered), [filtered]);
 
@@ -608,8 +631,8 @@ export default function AdminApp() {
           <FilterBar
             filters={filters}
             pairs={pairs}
-            shown={filtered.length}
-            loaded={items.length}
+            shown={items.length}
+            loaded={filtersActive ? (totalMatches ?? items.length) : items.length}
             onChange={setFilters}
           />
 
@@ -650,10 +673,9 @@ export default function AdminApp() {
             </section>
           ))}
 
-          {!listLoading && items.length > 0 && filtered.length === 0 && (
+          {!listLoading && filtersActive && items.length === 0 && !listError && (
             <p className="px-4 py-10 text-center text-sm text-zomi-muted">
-              Nothing loaded matches these filters.
-              {hasMore ? " Load more entries to search further back." : ""}
+              Nothing in the whole log matches these filters.
             </p>
           )}
 
@@ -675,8 +697,9 @@ export default function AdminApp() {
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-300/40 px-4 py-3 text-xs text-zomi-muted">
             <span className="tabular-nums">
-              Loaded {items.length.toLocaleString()}
-              {stats?.total != null ? ` of ${stats.total.toLocaleString()}` : ""}
+              {filtersActive && totalMatches != null
+                ? `Showing ${items.length.toLocaleString()} of ${totalMatches.toLocaleString()} matches in the whole log`
+                : `Loaded ${items.length.toLocaleString()}${stats?.total != null ? ` of ${stats.total.toLocaleString()}` : ""}`}
             </span>
             <div className="flex items-center gap-3">
               <label className="inline-flex items-center gap-1.5">
@@ -693,7 +716,12 @@ export default function AdminApp() {
               {hasMore && (
                 <button
                   type="button"
-                  onClick={() => token && loadPage(token, cursor, order)}
+                  onClick={() =>
+                    token &&
+                    (filtersActive
+                      ? loadPage(token, null, order, matchOffset ?? items.length)
+                      : loadPage(token, cursor, order))
+                  }
                   disabled={listLoading}
                   className="rounded-full bg-zomi-red px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-zomi-red-dark disabled:bg-stone-300"
                 >

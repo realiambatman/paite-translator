@@ -89,7 +89,7 @@ export function FilterBar({ filters, pairs, shown, loaded, onChange }: Props) {
       </label>
 
       <span className="ml-auto text-xs tabular-nums text-zomi-muted">
-        {active ? `${shown} of ${loaded} loaded` : `${loaded} loaded`}
+        {active ? `${loaded.toLocaleString()} match${loaded === 1 ? "" : "es"}` : `${shown} loaded`}
         {active && (
           <button
             type="button"
