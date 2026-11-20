@@ -28,7 +28,7 @@ HF_TOKEN = os.environ.get("HF_TOKEN") or None
 BATCH = int(os.environ.get("ZO_BATCH_SIZE", "16"))
 BEAMS = int(os.environ.get("ZO_NUM_BEAMS", "4"))
 MAX_EXTRA = int(os.environ.get("ZO_MAX_LANGUAGES", "12"))   # one request translates into at most this many
-CANDIDATES = int(os.environ.get("ZO_CANDIDATES", "3"))      # translations offered for the main language (best + others)
+CANDIDATES = int(os.environ.get("ZO_CANDIDATES", "3"))      # translations offered per language (best + others)
 
 NAMES = {
     "en": "English", "pck": "Paite", "lus": "Mizo", "ctd": "Tedim", "hmr": "Hmar", "tcz": "Thadou",
@@ -168,8 +168,8 @@ class ZoModel:
         wanted = [target] + [c for c in extra if c != target]
         wanted = wanted[:MAX_EXTRA]
         t0, results = time.time(), []
-        for c in wanted:   # other candidates only for the main language: the extra languages stay quick
-            versions = self.translate(text, c, CANDIDATES if c == target else 1)
+        for c in wanted:   # the beam search finds several candidates anyway: offer them in every language
+            versions = self.translate(text, c, CANDIDATES)
             results.append({"code": c, "label": NAMES.get(c, c), "translation": versions[0],
                             "alternatives": versions[1:]})
         return {"results": results, "seconds": round(time.time() - t0, 2)}
