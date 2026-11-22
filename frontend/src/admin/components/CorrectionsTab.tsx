@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   downloadCorrections,
   type AdminCorrection,
@@ -19,9 +19,11 @@ interface Props {
   onStatus: (item: AdminCorrection, next: CorrectionStatus, editedText?: string) => void;
   onDelete: (item: AdminCorrection) => void;
   onAuthError: (err: unknown) => boolean;
+  /** Set when the admin clicked a thumbs count: the list opens on the translations with that rating. */
+  showRated?: { rating: "up" | "down"; at: number } | null;
 }
 
-type GroupFilter = "all" | "undecided" | "accepted" | "people" | "ai";
+type GroupFilter = "all" | "undecided" | "accepted" | "people" | "ai" | "down" | "up";
 
 interface Group {
   key: string;
@@ -93,8 +95,12 @@ export function CorrectionsTab({
   onStatus,
   onDelete,
   onAuthError,
+  showRated,
 }: Props) {
-  const [filter, setFilter] = useState<GroupFilter>("all");
+  const [filter, setFilter] = useState<GroupFilter>(showRated?.rating ?? "all");
+  useEffect(() => {   // a later click on a thumbs count switches the list again
+    if (showRated) setFilter(showRated.rating);
+  }, [showRated]);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -110,6 +116,8 @@ export function CorrectionsTab({
         return false;
       }
       if (filter === "ai" && group.ai.length === 0) return false;
+      if (filter === "down" && group.thumbsDown === 0) return false;
+      if (filter === "up" && group.thumbsUp === 0) return false;
       if (q) {
         const hay = [
           group.srcText,
@@ -153,6 +161,8 @@ export function CorrectionsTab({
           <option value="accepted">With accepted suggestions</option>
           <option value="people">From visitors</option>
           <option value="ai">From AI review</option>
+          <option value="down">With a thumbs down</option>
+          <option value="up">With a thumbs up</option>
         </select>
         <input
           type="search"

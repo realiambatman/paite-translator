@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { fetchZoStatus, translateZo, type ZoResult, type ZoStatus } from "../services/api";
 import { saveTranslationLog } from "../services/translationLog";
 import { FeedbackPanel } from "./FeedbackPanel";
@@ -7,14 +7,14 @@ import { FeedbackPanel } from "./FeedbackPanel";
 export const ZO_ROUTE = "own-125m";
 
 // Our own model for English and the Zo languages. It is a test model: good from English, weak between two
-// Zo languages (too few such pairs to learn from). The visitor says which language the text is in. From a Zo
-// language English is the reliable answer; another Zo language can be tried and is marked as in progress.
+// Zo languages (too few such pairs to learn from). The visitor picks the language the text is in and one
+// language to translate into, as on the Paite tab. Zo to Zo can be tried and carries a short note.
 // The server also checks the text itself, in case the source was left on English.
 export function ZoTranslator() {
   const [status, setStatus] = useState<ZoStatus | null>(null);
   const [text, setText] = useState("");
   const [source, setSource] = useState("en");
-  const [targets, setTargets] = useState<string[]>([]);
+  const [target, setTarget] = useState("pck");
   const [results, setResults] = useState<ZoResult[]>([]);
   const [logIds, setLogIds] = useState<Record<string, string | null>>({});
   const [picked, setPicked] = useState<Record<string, string>>({});   // a candidate the visitor chose instead
@@ -24,17 +24,6 @@ export function ZoTranslator() {
   const [notEnglish, setNotEnglish] = useState(false);   // source was English, but the text was not
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showTargets, setShowTargets] = useState(false);
-  const targetsRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {   // the language list closes when you click anywhere else
-    if (!showTargets) return;
-    const close = (e: MouseEvent) => {
-      if (targetsRef.current && !targetsRef.current.contains(e.target as Node)) setShowTargets(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [showTargets]);
 
   useEffect(() => {
     let stop = false;
@@ -43,9 +32,7 @@ export function ZoTranslator() {
         const s = await fetchZoStatus();
         if (stop) return;
         setStatus((prev) => {
-          if (!prev) {   // first answer: one language is chosen to begin with, the rest is the visitor's choice
-            setTargets([s.default_target, ...s.default_extra].filter((c) => s.languages.some((l) => l.code === c)));
-          }
+          if (!prev && s.languages.some((l) => l.code === s.default_target)) setTarget(s.default_target);
           return s;
         });
         if (!s.ready && !s.error) setTimeout(load, 5000);
@@ -65,25 +52,22 @@ export function ZoTranslator() {
     return l ? l.label + (l.little_data ? " (little data, unreliable)" : "") : code;
   };
   const fromEnglish = source === "en";
-  // The language the text is in is never an answer.
-  const chosen = useMemo(() => targets.filter((c) => c !== source), [source, targets]);
   const short = (code: string) => label(code).split(" (")[0];
+  const zoToZo = source !== "en" && target !== "en";
 
+  // The language the text is in is never an answer: picking it as the source moves the answer elsewhere.
   const changeSource = (code: string) => {
     setSource(code);
-    // from a Zo language English is the answer that works: it is ticked, and the rest stays as chosen
-    if (code !== "en") setTargets((cur) => (cur.includes("en") ? cur : ["en", ...cur]));
+    if (code !== "en") setTarget("en");                       // from a Zo language, English is what works
+    else if (target === "en") setTarget(status?.default_target ?? "pck");
   };
 
-  const toggle = (code: string) =>
-    setTargets((cur) => (cur.includes(code) ? cur.filter((c) => c !== code) : [...cur, code]));
-
   const run = async () => {
-    if (!text.trim() || busy || chosen.length === 0) return;
+    if (!text.trim() || busy || target === source) return;
     setBusy(true);
     setError(null);
     try {
-      const r = await translateZo(text, source, chosen);
+      const r = await translateZo(text, source, [target]);
       setResults(r.results);
       setNotEnglish(fromEnglish && r.source_english === false);
       setSeconds(r.seconds);
@@ -120,13 +104,11 @@ export function ZoTranslator() {
       ? "The Zo model could not be loaded on the server."
       : !ready
         ? "Loading the model…"
-        : chosen.length === 0
-          ? "Choose a language to translate into."
-          : `${languages.length} languages`;
+        : `${languages.length} languages`;
 
   return (
     <div className="mt-3 overflow-hidden rounded-2xl border border-stone-300/60 bg-zomi-paper shadow-[0_1px_0_rgb(28_25_23/0.04),0_12px_32px_-16px_rgb(28_25_23/0.18)]">
-      <div ref={targetsRef} className="relative flex flex-col gap-3 border-b border-stone-300/50 px-4 py-3 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex flex-col gap-3 border-b border-stone-300/50 px-4 py-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-zomi-muted">Source</p>
           <span className="relative inline-flex min-w-0 items-center">
@@ -148,54 +130,32 @@ export function ZoTranslator() {
         </div>
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-zomi-muted">Translate into</p>
-          <button
-            type="button"
-            onClick={() => setShowTargets((v) => !v)}
-            disabled={!ready}
-            aria-expanded={showTargets}
-            className="flex max-w-[22rem] items-center gap-2 rounded-xl py-1.5 pl-1 pr-2 text-left text-sm text-zomi-ink transition hover:bg-white/70 disabled:opacity-50"
-          >
-            <span className="truncate">
-              {chosen.length ? chosen.map((c) => label(c).split(" (")[0]).join(", ") : "Choose languages"}
-            </span>
-            <span className="shrink-0 text-zomi-muted">▾</span>
-          </button>
-          {showTargets && (
-            <div className="absolute inset-x-3 top-full z-20 mt-1 grid grid-cols-2 gap-x-2 rounded-xl border border-stone-300/70 bg-white p-2 shadow-lg sm:grid-cols-3 lg:grid-cols-5">
-              {!fromEnglish && (
-                <p className="col-span-full px-2 pb-1 text-xs text-zomi-muted">
-                  From {short(source)}, English is the reliable choice. You can try another Zo language, but Zo to Zo
-                  is still in progress and often wrong.
-                </p>
-              )}
+          <span className="relative inline-flex min-w-0 items-center">
+            <select
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              disabled={!ready || busy}
+              aria-label="The language to translate into"
+              className="cursor-pointer appearance-none rounded-xl border border-transparent bg-transparent py-1.5 pl-1 pr-8 font-serif text-lg font-semibold text-zomi-ink outline-none transition hover:bg-white/70 disabled:opacity-60"
+            >
               {languages
                 .filter((l) => l.code !== source)
                 .map((l) => (
-                  <label key={l.code} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 text-sm hover:bg-zomi-paper">
-                    <input
-                      type="checkbox"
-                      checked={targets.includes(l.code)}
-                      onChange={() => toggle(l.code)}
-                      className="accent-zomi-red"
-                    />
-                    <span className={`truncate ${l.little_data ? "text-zomi-muted" : "text-zomi-ink"}`} title={label(l.code)}>
-                      {l.label}{l.little_data ? " *" : ""}
-                    </span>
-                  </label>
+                  <option key={l.code} value={l.code}>
+                    {label(l.code)}
+                  </option>
                 ))}
-              {languages.some((l) => l.little_data) && (
-                <p className="col-span-full px-2 pt-1 text-xs text-zomi-muted">* very little training data: output is a rough guess</p>
-              )}
-            </div>
-          )}
+            </select>
+            <span className="pointer-events-none absolute right-2 text-zomi-muted">▾</span>
+          </span>
         </div>
       </div>
 
-      <p className="border-b border-stone-300/50 bg-amber-50/70 px-4 py-2 text-sm leading-snug text-stone-700">
-        <span className="font-semibold">Test model.</span> It works best from English. Translating from one Zo
-        language to another is still in progress and often wrong, because the model has too little data for it.
-        It is not perfect in every language yet.
-      </p>
+      {zoToZo && (
+        <p className="border-b border-stone-300/50 bg-amber-50/70 px-4 py-2 text-sm text-stone-700">
+          Zo to Zo is still in development.
+        </p>
+      )}
 
       {error && (
         <div role="alert" className="border-b border-zomi-red/20 bg-zomi-red/5 px-4 py-3 text-sm text-zomi-red-dark">
@@ -221,7 +181,7 @@ export function ZoTranslator() {
             <button
               type="button"
               onClick={() => void run()}
-              disabled={!ready || busy || !text.trim() || chosen.length === 0}
+              disabled={!ready || busy || !text.trim() || target === source}
               className="rounded-full bg-zomi-red px-5 py-2 text-sm font-semibold text-white transition hover:bg-zomi-red-dark disabled:cursor-not-allowed disabled:opacity-50"
             >
               {busy ? "Translating…" : "Translate"}
@@ -231,26 +191,19 @@ export function ZoTranslator() {
         <div className="min-h-[220px] space-y-4 px-4 py-3">
           {results.length === 0 ? (
             <p className="text-sm text-zomi-muted">
-              {busy ? "Translating…" : "The translation appears here, in each chosen language."}
+              {busy ? "Translating…" : "The translation appears here."}
             </p>
           ) : (
             <>
               {notEnglish && (
                 <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-stone-700">
-                  Your text does not look like English, so it was translated into English only. To try another
-                  language, choose the language of your text under Source.
+                  This does not look like English, so it was translated into English. Set Source to your language
+                  to try another.
                 </p>
               )}
               {results.map((r) => (
               <div key={r.code}>
-                <p className="text-xs font-semibold uppercase tracking-wide text-zomi-muted">
-                  {label(r.code)}
-                  {lastSourceLang !== "en" && r.code !== "en" && (
-                    <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 font-normal normal-case tracking-normal text-stone-700">
-                      Zo to Zo: in progress, may be wrong
-                    </span>
-                  )}
-                </p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-zomi-muted">{label(r.code)}</p>
                 <p className="whitespace-pre-wrap text-[1.05rem] leading-relaxed text-zomi-ink">{picked[r.code] ?? r.translation}</p>
                 <FeedbackPanel
                   key={`${lastSource}::${r.code}::${r.translation}`}

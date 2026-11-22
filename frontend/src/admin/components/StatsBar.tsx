@@ -4,9 +4,11 @@ import { formatNumber } from "../format";
 interface Props {
   stats: AdminStats | null;
   loading: boolean;
+  /** Opens the list of translations that got this rating. */
+  onShowRated?: (rating: "up" | "down") => void;
 }
 
-export function StatsBar({ stats, loading }: Props) {
+export function StatsBar({ stats, loading, onShowRated }: Props) {
   const tiles: { label: string; value: number | null | undefined }[] = [
     { label: "Total", value: stats?.total },
     { label: "Today", value: stats?.today },
@@ -35,8 +37,22 @@ export function StatsBar({ stats, loading }: Props) {
       ))}
       <div className="flex items-baseline gap-1.5">
         <p className="font-serif text-lg font-semibold tabular-nums">
-          <span className="text-emerald-700">👍 {formatNumber(thumbs?.thumbs_up)}</span>{" "}
-          <span className="text-zomi-red-dark">👎 {formatNumber(thumbs?.thumbs_down)}</span>
+          <button
+            type="button"
+            onClick={() => onShowRated?.("up")}
+            title="Show the translations that got a thumbs up"
+            className="rounded px-1 text-emerald-700 transition hover:bg-emerald-50"
+          >
+            👍 {formatNumber(thumbs?.thumbs_up)}
+          </button>{" "}
+          <button
+            type="button"
+            onClick={() => onShowRated?.("down")}
+            title="Show the translations that got a thumbs down"
+            className="rounded px-1 text-zomi-red-dark transition hover:bg-zomi-red/10"
+          >
+            👎 {formatNumber(thumbs?.thumbs_down)}
+          </button>
         </p>
       </div>
     </div>

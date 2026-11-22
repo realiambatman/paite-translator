@@ -152,6 +152,9 @@ export default function AdminApp() {
   }, []);
 
 
+  // a click on a thumbs count in the header opens the suggestions list on the translations with that rating
+  const [showRated, setShowRated] = useState<{ rating: "up" | "down"; at: number } | null>(null);
+
   const switchTab = (next: Tab) => {
     setTab(next);
     window.history.replaceState(null, "", next === "translations" ? "#" : `#${next}`);
@@ -528,7 +531,14 @@ export default function AdminApp() {
           <h1 className="font-serif text-2xl font-bold leading-none tracking-tight text-zomi-ink">
             Zomi Translator <span className="font-normal text-zomi-muted">admin</span>
           </h1>
-          <StatsBar stats={stats} loading={statsLoading} />
+          <StatsBar
+            stats={stats}
+            loading={statsLoading}
+            onShowRated={(rating) => {
+              setShowRated({ rating, at: Date.now() });
+              switchTab("corrections");
+            }}
+          />
         </header>
 
         <div className="zomi-puan h-[10px] rounded-sm" aria-hidden />
@@ -610,6 +620,7 @@ export default function AdminApp() {
               onStatus={handleSuggestionStatus}
               onDelete={handleSuggestionDelete}
               onAuthError={handleAuthFailure}
+              showRated={showRated}
             />
           )}
           {tab === "glossary" && (
