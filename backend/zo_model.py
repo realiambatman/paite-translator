@@ -42,7 +42,7 @@ NAMES = {
 LITTLE_DATA = {"kmm", "aim", "biu", "lmk", "cnw", "czt", "dao", "zyp"}
 ORDER = ["en", "pck", "lus", "ctd", "hmr", "tcz", "vap", "zom", "smt", "gnb", "cnh", "cfm", "csy"]
 DEFAULT_TARGET = "pck"
-DEFAULT_EXTRA = ["lus", "ctd"]   # Mizo and Tedim; visitors tick more under "Also translate into"
+DEFAULT_EXTRA: list[str] = []    # nothing else is ticked to begin with: the visitor chooses under "Translate into"
 
 
 def _split_sentences(line: str) -> list[str]:

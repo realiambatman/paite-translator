@@ -15,6 +15,7 @@ from simplify import is_available as simplify_available, simplify_english
 from static_files import SpaStaticFiles
 from limits import MAX_TRANSLATION_TOKENS, max_chars_for_tokens
 from translation import TranslationEngine
+from source_check import is_english
 from zo_model import DEFAULT_EXTRA as ZO_DEFAULT_EXTRA, DEFAULT_TARGET as ZO_DEFAULT_TARGET, load_in_background as zo_load, zo
 
 engine = TranslationEngine()
@@ -119,6 +120,7 @@ class SimplifyResponse(BaseModel):
 
 class ZoTranslateRequest(BaseModel):
     text: str = Field(default="", max_length=max_chars_for_tokens(MAX_TRANSLATION_TOKENS))
+    source: str = "en"            # the language the visitor says the text is in
     target: str = ZO_DEFAULT_TARGET
     extra: list[str] = Field(default_factory=list)
 
@@ -136,10 +138,25 @@ def zo_translate(body: ZoTranslateRequest):
         raise HTTPException(status_code=503, detail=zo.error or "The Zo model is still loading. Please try again shortly.")
     if not body.text.strip():
         return {"results": [], "seconds": 0}
+    # The model is good from English and weak between two Zo languages (too few such pairs to learn from).
+    # The language the visitor says the text is in is never an answer. From a Zo language any other language
+    # may be tried (the page marks Zo to Zo as in progress). When the source says English but the text itself
+    # clearly is not, the answer is English only, and the page says so.
+    english = is_english(body.text)
+    only_english = body.source == "en" and not english
+    if only_english:
+        wanted = ["en"]
+    else:
+        wanted = [c for c in dict.fromkeys([body.target, *body.extra]) if c != body.source]
+        if not wanted:
+            raise HTTPException(status_code=400, detail="Choose a language to translate into.")
     try:
-        return zo.translate_many(body.text, body.target, body.extra)
+        out = zo.translate_many(body.text, wanted[0], wanted[1:])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    out["english_only"] = only_english
+    out["source_english"] = english
+    return out
 
 
 @app.post("/api/simplify", response_model=SimplifyResponse)

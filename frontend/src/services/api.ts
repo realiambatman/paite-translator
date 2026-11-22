@@ -390,10 +390,19 @@ export function fetchZoStatus(): Promise<ZoStatus> {
   return request<ZoStatus>("/api/zo/status");
 }
 
-export function translateZo(text: string, target: string, extra: string[]): Promise<{ results: ZoResult[]; seconds: number }> {
+/**
+ * source is the language the text is in (never an answer); targets the languages to translate into.
+ * source_english is false when the text itself did not look like English; english_only is true when the
+ * source said English but the text was not, and the server therefore answered in English only.
+ */
+export function translateZo(
+  text: string,
+  source: string,
+  targets: string[],
+): Promise<{ results: ZoResult[]; seconds: number; source_english?: boolean; english_only?: boolean }> {
   return request("/api/zo/translate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, target, extra }),
+    body: JSON.stringify({ text, source, target: targets[0] ?? "en", extra: targets.slice(1) }),
   });
 }
