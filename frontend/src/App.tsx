@@ -598,7 +598,8 @@ export default function App() {
               Zomi Translator
             </h1>
             <p className="mt-1.5 max-w-xl text-sm leading-snug text-zomi-muted">
-              English ↔ Paite, with Mizo, Meitei, Burmese, Hindi and more
+              English ↔ Paite, with Mizo, Tedim, Hmar, Thadou, Vaiphei,
+              Gangte, Simte and Zou, plus Meitei, Burmese, Hindi and more
               languages of the Northeast and beyond.
             </p>
           </div>
@@ -988,6 +989,12 @@ export default function App() {
               for the language. Other pairs pass through English using Google
               Translate, and you can edit that English step when the meaning
               drifts.
+            </p>
+            <p>
+              The Zo languages tab runs on our own model, trained from scratch
+              on Zo text: English to and from Paite, Mizo, Tedim, Hmar, Thadou,
+              Vaiphei, Gangte, Simte, Zou, Hakha, Falam and Siyin. It is a
+              test model and works best from English.
             </p>
             <p>
               Every thumbs up, thumbs down and suggested fix goes back into
