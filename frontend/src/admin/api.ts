@@ -292,11 +292,12 @@ async function adminSend<T>(
 
 export function fetchCorrections(
   token: string,
-  options: { status?: CorrectionStatus | "all"; kind?: "all" | "correction" | "rating" } = {},
+  options: { status?: CorrectionStatus | "all"; kind?: "all" | "correction" | "rating"; rating?: "up" | "down" } = {},
 ): Promise<{ items: AdminCorrection[]; count: number; truncated: boolean }> {
   const params = new URLSearchParams();
   params.set("status", options.status ?? "pending");
   params.set("kind", options.kind ?? "all");
+  if (options.rating) params.set("rating", options.rating);
   return adminJson(`/api/admin/corrections?${params.toString()}`, token);
 }
 

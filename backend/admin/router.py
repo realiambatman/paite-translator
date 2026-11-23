@@ -461,6 +461,7 @@ def _corrections_ref():
 def admin_corrections(
     status: str = Query(default="all"),
     kind: str = Query(default="all", pattern="^(all|correction|rating)$"),
+    rating: str = Query(default="all", pattern="^(all|up|down)$"),
     limit: int = Query(default=500, ge=1, le=2000),
 ):
     """Review queue. Filters are equality-only so no composite index is needed;
@@ -471,6 +472,8 @@ def admin_corrections(
     query = ref
     if kind != "all":
         query = query.where(filter=FieldFilter("kind", "==", kind))
+    if rating != "all":   # every thumbs up or down, however many suggestions there are
+        query = query.where(filter=FieldFilter("rating", "==", rating))
     if status != "all":
         if status not in CORRECTION_STATUSES:
             raise HTTPException(status_code=400, detail="Unknown status.")

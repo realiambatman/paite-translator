@@ -258,8 +258,16 @@ export default function AdminApp() {
   const loadCorrections = useCallback(async (activeToken: string) => {
     setCorrectionsLoading(true);
     try {
-      const page = await fetchCorrections(activeToken, { status: "all", kind: "all" });
-      setCorrections(page.items);
+      // The list holds the first few hundred suggestions; the thumbs are asked for on their own, so every
+      // rated translation is there however long the list is (the header counts all of them).
+      const [page, up, down] = await Promise.all([
+        fetchCorrections(activeToken, { status: "all", kind: "all" }),
+        fetchCorrections(activeToken, { status: "all", kind: "all", rating: "up" }),
+        fetchCorrections(activeToken, { status: "all", kind: "all", rating: "down" }),
+      ]);
+      const byId = new Map<string, AdminCorrection>();
+      for (const item of [...page.items, ...up.items, ...down.items]) byId.set(item.id, item);
+      setCorrections([...byId.values()].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? "")));
     } catch (err) {
       if (!(err instanceof AdminAuthError)) console.warn("Corrections failed:", err);
     } finally {
