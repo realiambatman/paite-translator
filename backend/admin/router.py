@@ -636,6 +636,43 @@ def admin_delete_correction(doc_id: str):
     return {"ok": True}
 
 
+class AcceptAll(BaseModel):
+    origin: str = Field(pattern="^(llm|user)$")   # llm: from AI review; user: everything a person filed
+    dry_run: bool = False                           # only count, change nothing
+
+
+@router.post("/corrections/accept-all", dependencies=[Depends(require_admin)])
+def admin_accept_all(body: AcceptAll):
+    """Mark every undecided suggestion from AI review, or every undecided one from people, as accepted
+    ("Use for training"). The whole queue is read, so suggestions the page has not loaded are included."""
+    from google.cloud import firestore
+
+    ref = _corrections_ref()
+    try:
+        chosen = []
+        for doc in ref.stream():
+            item = _serialize_correction(doc)
+            if item["kind"] != "correction" or item["status"] != "pending":
+                continue
+            if not (item["corrected_text"] or "").strip():
+                continue
+            if (item["origin"] == "llm") != (body.origin == "llm"):
+                continue
+            chosen.append(doc)
+        if not body.dry_run:
+            db = fs.get_client()
+            for i in range(0, len(chosen), 400):   # a Firestore batch holds at most 500 writes
+                batch = db.batch()
+                for doc in chosen[i:i + 400]:
+                    batch.update(doc.reference, {"status": "accepted", "reviewed_at": firestore.SERVER_TIMESTAMP})
+                batch.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Firestore update failed: {exc}") from exc
+    return {"count": len(chosen), "dry_run": body.dry_run}
+
+
 @router.get("/corrections/export.csv", dependencies=[Depends(require_admin)])
 @router.get("/corrections/export", dependencies=[Depends(require_admin)])
 def admin_export_corrections(

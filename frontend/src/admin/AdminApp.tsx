@@ -682,6 +682,7 @@ export default function AdminApp() {
               onStatus={handleSuggestionStatus}
               onDelete={handleSuggestionDelete}
               onAuthError={handleAuthFailure}
+              onBulkAccepted={refresh}
               showRated={showRated}
             />
           )}

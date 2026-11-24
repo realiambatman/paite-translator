@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  acceptAllCorrections,
   downloadCorrections,
   type AdminCorrection,
   type CorrectionStatus,
@@ -19,6 +20,8 @@ interface Props {
   onStatus: (item: AdminCorrection, next: CorrectionStatus, editedText?: string) => void;
   onDelete: (item: AdminCorrection) => void;
   onAuthError: (err: unknown) => boolean;
+  /** Called after "Accept all": the lists and the counts are read again. */
+  onBulkAccepted: () => void;
   /** Set when the admin clicked a thumbs count: the list opens on the translations with that rating. */
   showRated?: { rating: "up" | "down"; at: number } | null;
 }
@@ -95,6 +98,7 @@ export function CorrectionsTab({
   onStatus,
   onDelete,
   onAuthError,
+  onBulkAccepted,
   showRated,
 }: Props) {
   const [filter, setFilter] = useState<GroupFilter>(showRated?.rating ?? "all");
@@ -103,6 +107,34 @@ export function CorrectionsTab({
   }, [showRated]);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [accepting, setAccepting] = useState<"llm" | "user" | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const acceptAll = async (origin: "llm" | "user") => {
+    const from = origin === "llm" ? "AI review" : "people";
+    setAccepting(origin);
+    setError(null);
+    setNotice(null);
+    try {
+      const { count } = await acceptAllCorrections(token, origin, true);
+      if (count === 0) {
+        setNotice(`There are no undecided suggestions from ${from}.`);
+        return;
+      }
+      const sure = window.confirm(
+        `Mark all ${count.toLocaleString()} undecided suggestion${count === 1 ? "" : "s"} from ${from} as ` +
+          `"Use for training"? This includes ones not loaded on this page. Each can still be undone one by one.`,
+      );
+      if (!sure) return;
+      const done = await acceptAllCorrections(token, origin, false);
+      setNotice(`${done.count.toLocaleString()} suggestion${done.count === 1 ? "" : "s"} from ${from} marked for training.`);
+      onBulkAccepted();
+    } catch (err) {
+      if (!onAuthError(err)) setError(err instanceof Error ? err.message : "Accept all failed.");
+    } finally {
+      setAccepting(null);
+    }
+  };
 
   const groups = useMemo(() => groupCorrections(items), [items]);
 
@@ -179,6 +211,24 @@ export function CorrectionsTab({
         >
           Refresh
         </button>
+        <button
+          type="button"
+          onClick={() => void acceptAll("llm")}
+          disabled={accepting !== null}
+          title="Mark every undecided suggestion from AI review as 'Use for training'"
+          className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-violet-900 transition hover:bg-violet-100 disabled:opacity-60"
+        >
+          {accepting === "llm" ? "Working…" : "Accept all from AI"}
+        </button>
+        <button
+          type="button"
+          onClick={() => void acceptAll("user")}
+          disabled={accepting !== null}
+          title="Mark every undecided suggestion from people as 'Use for training'"
+          className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-emerald-900 transition hover:bg-emerald-100 disabled:opacity-60"
+        >
+          {accepting === "user" ? "Working…" : "Accept all from people"}
+        </button>
         <span className="text-xs text-zomi-muted">
           {visible.length} translation{visible.length === 1 ? "" : "s"} · {totals.pending} undecided ·{" "}
           {totals.accepted} for training
@@ -195,6 +245,11 @@ export function CorrectionsTab({
       {error && (
         <div role="alert" className="border-b border-zomi-red/25 bg-zomi-red/5 px-4 py-3 text-sm text-zomi-red-dark">
           {error}
+        </div>
+      )}
+      {notice && (
+        <div role="status" className="border-b border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-900">
+          {notice}
         </div>
       )}
 

@@ -317,6 +317,15 @@ export function fetchCorrections(
   return adminJson(`/api/admin/corrections?${params.toString()}`, token);
 }
 
+/** Accept every undecided suggestion from AI review ("llm") or from people ("user"); dryRun only counts them. */
+export function acceptAllCorrections(
+  token: string,
+  origin: "llm" | "user",
+  dryRun: boolean,
+): Promise<{ count: number; dry_run: boolean }> {
+  return adminSend("/api/admin/corrections/accept-all", token, "POST", { origin, dry_run: dryRun });
+}
+
 export function addCorrection(
   token: string,
   body: {
