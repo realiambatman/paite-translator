@@ -21,6 +21,8 @@ interface Props {
   onSuggestionDelete: (item: AdminCorrection) => void;
   /** Promote one of the model's own beam candidates to a training pair. */
   onAdoptCandidate: (item: AdminTranslation, text: string) => Promise<void>;
+  /** Delete this translation for good; the admin password is typed again to confirm. Rejects on failure. */
+  onDelete: (item: AdminTranslation, password: string) => Promise<void>;
 }
 
 const SOURCE_STYLES: Record<string, string> = {
@@ -73,6 +75,7 @@ export function TranslationCard({
   onSuggestionStatus,
   onSuggestionDelete,
   onAdoptCandidate,
+  onDelete,
 }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
@@ -104,6 +107,27 @@ export function TranslationCard({
   const [reviewing, setReviewing] = useState(false);
   const [reviewResult, setReviewResult] = useState<ReviewOneResult | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const closeDelete = () => {
+    setDeleteOpen(false);
+    setDeletePassword("");
+    setDeleteError(null);
+  };
+  const confirmDelete = async () => {
+    if (!deletePassword.trim() || deleting) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDelete(item, deletePassword);   // on success this card is removed from the list
+    } catch (err) {
+      setDeleteError(err instanceof Error && err.message ? err.message : "Could not delete it.");
+      setDeleting(false);
+    }
+  };
 
   const chosen = reviewer || reviewers[0] || "";
   const reviews =
@@ -544,7 +568,62 @@ export function TranslationCard({
                 Open file ↗
               </a>
             )}
+            {!deleteOpen && (
+              <button
+                type="button"
+                onClick={() => setDeleteOpen(true)}
+                className="ml-auto text-zomi-muted hover:text-zomi-red hover:underline"
+              >
+                Delete
+              </button>
+            )}
           </div>
+          {deleteOpen && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void confirmDelete();
+              }}
+              className="mt-2 rounded-xl border border-red-200 bg-red-50/70 px-3 py-2 text-[11px] text-zomi-ink"
+            >
+              <p className="mb-1.5">
+                Delete this translation for good
+                {suggestions.length > 0
+                  ? `, with the ${suggestions.length} suggestion${suggestions.length === 1 ? "" : "s"} or thumbs filed against it`
+                  : ""}
+                {item.file_url ? ", and its stored image or file" : ""}? This cannot be undone. Type the
+                admin password to confirm.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="password"
+                  value={deletePassword}
+                  onChange={(e) => setDeletePassword(e.target.value)}
+                  placeholder="Admin password"
+                  autoComplete="current-password"
+                  autoFocus
+                  disabled={deleting}
+                  className="w-48 rounded-full border border-red-200 bg-white px-3 py-1 text-xs outline-none focus:border-red-400"
+                />
+                <button
+                  type="submit"
+                  disabled={deleting || !deletePassword.trim()}
+                  className="rounded-full bg-red-700 px-3 py-1 font-semibold text-white transition hover:bg-red-800 disabled:bg-stone-300"
+                >
+                  {deleting ? "Deleting…" : "Delete permanently"}
+                </button>
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={closeDelete}
+                  className="text-zomi-muted hover:underline disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                {deleteError && <span className="text-red-700">{deleteError}</span>}
+              </div>
+            </form>
+          )}
         </div>
       </div>
     </article>

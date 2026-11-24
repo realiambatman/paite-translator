@@ -161,3 +161,15 @@ def presigned_url(key: str, expires_seconds: int = 3600) -> str | None:
     except (BotoCoreError, ClientError, KeyError) as exc:
         print(f"Presign failed for {key}: {exc}", flush=True)
         return None
+
+
+def delete_object(key: str) -> bool:
+    """Remove one stored file. True when it is gone, False when storage is not set up or the call failed."""
+    if not is_configured() or not key:
+        return False
+    try:
+        _client().delete_object(Bucket=os.environ["AWS_BUCKET"], Key=key)
+        return True
+    except (BotoCoreError, ClientError, KeyError) as exc:
+        print(f"Delete failed for {key}: {exc}", flush=True)
+        return False

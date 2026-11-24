@@ -5,6 +5,7 @@ import {
   AdminAuthError,
   addCorrection,
   deleteCorrection,
+  deleteTranslation,
   downloadTranslations,
   fetchAdminStatus,
   fetchCorrections,
@@ -377,6 +378,24 @@ export default function AdminApp() {
     [token, handleAuthFailure],
   );
 
+  // The card shows a wrong password or a failed delete itself, so errors are passed on to it.
+  const handleDeleteTranslation = useCallback(
+    async (item: AdminTranslation, password: string) => {
+      try {
+        await deleteTranslation(token, item.id, password);
+      } catch (err) {
+        handleAuthFailure(err);
+        throw err;
+      }
+      setItems((prev) => prev.filter((t) => t.id !== item.id));
+      setCorrections((prev) => prev.filter((c) => c.translation_id !== item.id));
+      setPageSuggestions((prev) => prev.filter((c) => c.translation_id !== item.id));
+      setTotalMatches((prev) => (prev == null ? prev : Math.max(0, prev - 1)));
+      void loadStatsRef.current(token);
+    },
+    [token, handleAuthFailure],
+  );
+
   const suggestionsByTranslation = useMemo(() => {
     const map = new Map<string, AdminCorrection[]>();
     const seen = new Set<string>();
@@ -722,6 +741,7 @@ export default function AdminApp() {
                   onSuggestionStatus={handleSuggestionStatus}
                   onSuggestionDelete={handleSuggestionDelete}
                   onAdoptCandidate={handleAdoptCandidate}
+                  onDelete={handleDeleteTranslation}
                 />
               ))}
             </section>

@@ -288,6 +288,15 @@ async function adminSend<T>(
   return (await response.json()) as T;
 }
 
+/** Deletes a translation for good, with its suggestions and stored file. The admin password is asked again. */
+export function deleteTranslation(
+  token: string,
+  id: string,
+  password: string,
+): Promise<{ ok: boolean; suggestions_deleted: number; file_deleted: boolean | null }> {
+  return adminSend(`/api/admin/translations/${encodeURIComponent(id)}`, token, "DELETE", { password });
+}
+
 // ---------------------------------------------------------------- corrections
 
 export function fetchCorrections(

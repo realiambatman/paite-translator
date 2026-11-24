@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import os
+import secrets
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -15,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from object_storage import (
+    delete_object,
     is_configured as storage_configured,
     key_from_url,
     presigned_url,
@@ -23,7 +25,7 @@ from object_storage import (
 import glossary as glossary_module
 
 from . import firestore_client as fs
-from .auth import is_configured as auth_configured, require_admin
+from .auth import admin_password, is_configured as auth_configured, require_admin
 
 CORRECTIONS_COLLECTION = (
     os.environ.get("VITE_FIREBASE_CORRECTIONS_COLLECTION", "corrections").strip()
@@ -388,6 +390,52 @@ def admin_translation(doc_id: str):
     if not snapshot.exists:
         raise HTTPException(status_code=404, detail="Translation not found.")
     return _serialize(snapshot)
+
+
+class TranslationDelete(BaseModel):
+    password: str = Field(min_length=1, max_length=500)
+
+
+@router.delete("/translations/{doc_id}", dependencies=[Depends(require_admin)])
+def admin_delete_translation(doc_id: str, body: TranslationDelete):
+    """Delete one translation for good, with the suggestions and thumbs filed against it and its stored
+    image or file. The admin password is asked for again, so a stray click cannot do it."""
+    from google.cloud.firestore_v1 import FieldFilter
+
+    if not secrets.compare_digest(body.password.strip().encode(), admin_password().encode()):
+        # 403, not 401: the page treats 401 as "signed out", and a mistyped confirmation is not that
+        raise HTTPException(status_code=403, detail="Wrong password. Nothing was deleted.")
+
+    ref = _firestore_or_503()
+    try:
+        snapshot = ref.document(doc_id).get()
+        if not snapshot.exists:
+            raise HTTPException(status_code=404, detail="Translation not found.")
+        storage_url = (snapshot.to_dict() or {}).get("storage_url") or None
+
+        suggestions = 0
+        for doc in _corrections_ref().where(filter=FieldFilter("translation_id", "==", doc_id)).stream():
+            doc.reference.delete()
+            suggestions += 1
+        ref.document(doc_id).delete()
+
+        file_deleted = None   # None: there was no stored file, or another entry still uses it
+        if storage_url:
+            shared = any(
+                other.id != doc_id
+                for other in ref.where(filter=FieldFilter("storage_url", "==", storage_url)).limit(2).stream()
+            )
+            key = None if shared else key_from_url(storage_url)
+            if key:
+                file_deleted = delete_object(key)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Firestore delete failed: {exc}") from exc
+
+    with _all_docs_lock:
+        _all_docs["docs"] = [doc for doc in _all_docs["docs"] if doc.id != doc_id]
+    return {"ok": True, "suggestions_deleted": suggestions, "file_deleted": file_deleted}
 
 
 @router.get("/export.csv", dependencies=[Depends(require_admin)])
