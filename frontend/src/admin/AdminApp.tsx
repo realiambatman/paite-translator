@@ -132,6 +132,10 @@ export default function AdminApp() {
   const [tab, setTab] = useState<Tab>(() => tabFromHash());
   const [corrections, setCorrections] = useState<AdminCorrection[]>([]);
   const [correctionsLoading, setCorrectionsLoading] = useState(false);
+  // Suggestions for the translations on the page, asked for by translation: the list above holds only the
+  // newest of the queue, so an older translation's suggestions (or a new one in a long queue) would be missing.
+  const [pageSuggestions, setPageSuggestions] = useState<AdminCorrection[]>([]);
+  const suggestionsAskedFor = useRef(new Set<string>());
   const [busySuggestionId, setBusySuggestionId] = useState<string | null>(null);
   const [review, setReview] = useState<ReviewStatus | null>(null);
   const [, setClock] = useState(0);
@@ -275,6 +279,31 @@ export default function AdminApp() {
     }
   }, []);
 
+  const loadSuggestionsFor = useCallback(async (activeToken: string, ids: string[]) => {
+    for (let i = 0; i < ids.length; i += 100) {
+      const chunk = ids.slice(i, i + 100);
+      try {
+        const found = await fetchCorrections(activeToken, { status: "all", kind: "all", translationIds: chunk });
+        const asked = new Set(chunk);
+        setPageSuggestions((prev) => [
+          ...prev.filter((c) => !c.translation_id || !asked.has(c.translation_id)),
+          ...found.items,
+        ]);
+      } catch (err) {
+        for (const id of chunk) suggestionsAskedFor.current.delete(id);   // asked again with the next page
+        if (!(err instanceof AdminAuthError)) console.warn("Suggestions failed:", err);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    const missing = items.map((item) => item.id).filter((id) => !suggestionsAskedFor.current.has(id));
+    if (missing.length === 0) return;
+    for (const id of missing) suggestionsAskedFor.current.add(id);
+    void loadSuggestionsFor(token, missing);
+  }, [items, token, loadSuggestionsFor]);
+
   const handleRowReview = useCallback(
     async (item: AdminTranslation, reviewer: string, onExisting: OnExisting) => {
       const response = await reviewTranslation(token, item.id, { reviewer, on_existing: onExisting });
@@ -282,10 +311,11 @@ export default function AdminApp() {
       if (response.result.verdict === "fix" || response.result.replaced) {
         void loadStatsRef.current(token);
         void loadCorrections(token);
+        void loadSuggestionsFor(token, [item.id]);
       }
       return response.result;
     },
-    [token, loadCorrections],
+    [token, loadCorrections, loadSuggestionsFor],
   );
 
   const handleSuggestionStatus = useCallback(
@@ -294,6 +324,7 @@ export default function AdminApp() {
       try {
         const updated = await reviewCorrection(token, item.id, next, editedText);
         setCorrections((prev) => prev.map((c) => (c.id === item.id ? updated : c)));
+        setPageSuggestions((prev) => prev.map((c) => (c.id === item.id ? updated : c)));
         void loadStatsRef.current(token);
       } catch (err) {
         if (!handleAuthFailure(err)) {
@@ -313,6 +344,7 @@ export default function AdminApp() {
       try {
         await deleteCorrection(token, item.id);
         setCorrections((prev) => prev.filter((c) => c.id !== item.id));
+        setPageSuggestions((prev) => prev.filter((c) => c.id !== item.id));
         void loadStatsRef.current(token);
       } catch (err) {
         if (!handleAuthFailure(err)) {
@@ -347,14 +379,16 @@ export default function AdminApp() {
 
   const suggestionsByTranslation = useMemo(() => {
     const map = new Map<string, AdminCorrection[]>();
-    for (const c of corrections) {
-      if (!c.translation_id) continue;
+    const seen = new Set<string>();
+    for (const c of [...corrections, ...pageSuggestions]) {
+      if (!c.translation_id || seen.has(c.id)) continue;
+      seen.add(c.id);
       const list = map.get(c.translation_id);
       if (list) list.push(c);
       else map.set(c.translation_id, [c]);
     }
     return map;
-  }, [corrections]);
+  }, [corrections, pageSuggestions]);
 
   const loadFacets = useCallback(
     (activeToken: string, fresh = false) =>
@@ -366,6 +400,7 @@ export default function AdminApp() {
 
   const refresh = useCallback(() => {
     if (!token) return;
+    suggestionsAskedFor.current.clear();
     setItems([]);
     setCursor(null);
     void loadStats(token);

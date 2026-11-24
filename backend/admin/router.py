@@ -463,11 +463,27 @@ def admin_corrections(
     kind: str = Query(default="all", pattern="^(all|correction|rating)$"),
     rating: str = Query(default="all", pattern="^(all|up|down)$"),
     limit: int = Query(default=500, ge=1, le=2000),
+    translation_ids: str = Query(default="", max_length=4000),
 ):
-    """Review queue. Filters are equality-only so no composite index is needed;
-    sorting happens here because the queue is small."""
+    """Review queue, newest first. Filters are equality-only so no composite index is needed.
+
+    `translation_ids` (comma-separated) asks instead for every suggestion filed against those translations,
+    however long the queue is: the admin page uses it for the translations it is showing."""
     ref = _corrections_ref()
+    from google.cloud import firestore
     from google.cloud.firestore_v1 import FieldFilter
+
+    wanted = list(dict.fromkeys(t.strip() for t in translation_ids.split(",") if t.strip()))[:200]
+    if wanted:
+        docs = []
+        try:
+            for i in range(0, len(wanted), 30):   # Firestore takes at most 30 values in one "in"
+                docs += list(ref.where(filter=FieldFilter("translation_id", "in", wanted[i:i + 30])).stream())
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Firestore read failed: {exc}") from exc
+        items = [_serialize_correction(doc) for doc in docs]
+        items.sort(key=lambda item: item["created_at"] or "", reverse=True)
+        return {"items": items, "count": len(items), "truncated": False}
 
     query = ref
     if kind != "all":
@@ -479,6 +495,10 @@ def admin_corrections(
             raise HTTPException(status_code=400, detail="Unknown status.")
         query = query.where(filter=FieldFilter("status", "==", status))
 
+    if kind == "all" and rating == "all" and status == "all":
+        # Without a filter the newest must come first: an unordered read returns the first `limit` by
+        # document id, so with more suggestions than that a new one was usually missing from the page.
+        query = query.order_by("created_at", direction=firestore.Query.DESCENDING)
     try:
         docs = list(query.limit(limit).stream())
     except Exception as exc:
