@@ -53,7 +53,6 @@ export function ZoTranslator() {
   };
   const fromEnglish = source === "en";
   const short = (code: string) => label(code).split(" (")[0];
-  const zoToZo = source !== "en" && target !== "en";
 
   // The language the text is in is never an answer: picking it as the source moves the answer elsewhere.
   const changeSource = (code: string) => {
@@ -150,12 +149,6 @@ export function ZoTranslator() {
           </span>
         </div>
       </div>
-
-      {zoToZo && (
-        <p className="border-b border-stone-300/50 bg-amber-50/70 px-4 py-2 text-sm text-stone-700">
-          Zo to Zo is still in development.
-        </p>
-      )}
 
       {error && (
         <div role="alert" className="border-b border-zomi-red/20 bg-zomi-red/5 px-4 py-3 text-sm text-zomi-red-dark">

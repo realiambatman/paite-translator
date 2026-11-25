@@ -991,10 +991,11 @@ export default function App() {
               drifts.
             </p>
             <p>
-              The Zo languages tab runs on a test model, trained from scratch
-              on Zo text: English to and from Paite, Mizo, Tedim, Hmar, Thadou,
-              Vaiphei, Gangte, Simte, Zou, Hakha, Falam and Siyin. It is still
-              being improved and works best from English.
+              The Zo languages tab runs on our own model, trained from scratch
+              on Zo text. It translates between English and Paite, Mizo, Tedim,
+              Hmar, Thadou, Vaiphei, Gangte, Simte, Zou, Hakha, Falam and Siyin,
+              and straight from one Zo language into another. Choose the
+              language your text is in, so the model reads it correctly.
             </p>
             <p>
               Every thumbs up, thumbs down and suggested fix goes back into

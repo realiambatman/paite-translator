@@ -139,7 +139,7 @@ def zo_translate(body: ZoTranslateRequest):
     if not body.text.strip():
         return {"results": [], "seconds": 0}
     # The language the visitor says the text is in is never an answer. From a Zo language any other language
-    # may be tried (the page marks Zo to Zo as in progress). When the source says English but the text itself
+    # may be tried. When the source says English but the text itself
     # clearly is not, the answer is English only, and the page says so.
     # The model is told the language of the text (its source tag): the one the visitor chose, except when the
     # text contradicts it (source English, text not English), where no source is given.
