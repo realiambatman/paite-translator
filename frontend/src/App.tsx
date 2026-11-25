@@ -659,6 +659,7 @@ export default function App() {
                 onChange={setSrcLang}
                 languages={availableLanguages}
                 disabled={busy}
+                ariaLabel="The language your text is in"
               />
               <button
                 type="button"
@@ -677,6 +678,8 @@ export default function App() {
                 onChange={setTgtLang}
                 languages={availableLanguages}
                 disabled={busy}
+                ariaLabel="The language to translate into"
+                align="right"
               />
             </div>
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { LanguagePicker, type PickerOption } from "./LanguagePicker";
 import { fetchZoStatus, translateZo, type ZoResult, type ZoStatus } from "../services/api";
 import { saveTranslationLog } from "../services/translationLog";
 import { FeedbackPanel } from "./FeedbackPanel";
@@ -9,6 +10,9 @@ export const ZO_ROUTE = "own-125m";
 // Our own model for English and the Zo languages (the "small" model). The visitor picks the language the
 // text is in and one language to translate into, as on the Paite tab; the two can be swapped.
 // The server also checks the text itself, in case the source was left on English.
+const MAIN = new Set(["en", "pck", "lus", "ctd", "hmr", "tcz", "vap", "zom", "smt", "gnb", "cnh", "cfm", "csy"]);
+const NEIGHBOURS = /^(hi|my|mni)(_|$)/;
+
 export function ZoTranslator() {
   const [status, setStatus] = useState<ZoStatus | null>(null);
   const [text, setText] = useState("");
@@ -50,6 +54,15 @@ export function ZoTranslator() {
     const l = languages.find((x) => x.code === code);
     return l ? l.label + (l.little_data ? " (little data, unreliable)" : "") : code;
   };
+  // The picker's list: the languages with the most data first, then Hindi, Burmese and Meitei, then the rest.
+  const options: PickerOption[] = languages.map((l) => ({
+    code: l.code,
+    label: l.label,
+    note: l.little_data ? "little data" : undefined,
+    group: MAIN.has(l.code) ? "Main languages" : NEIGHBOURS.test(l.code) ? "Hindi, Burmese, Meitei" : "More Zo languages",
+  }));
+  const rank = (g?: string) => (g === "Main languages" ? 0 : g === "More Zo languages" ? 1 : 2);
+  options.sort((a, b) => rank(a.group) - rank(b.group));
   const fromEnglish = source === "en";
   const short = (code: string) => label(code).split(" (")[0];
 
@@ -124,22 +137,13 @@ export function ZoTranslator() {
       <div className="flex flex-col gap-3 border-b border-stone-300/50 px-4 py-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-zomi-muted">Source</p>
-          <span className="relative inline-flex min-w-0 items-center">
-            <select
-              value={source}
-              onChange={(e) => changeSource(e.target.value)}
-              disabled={!ready || busy}
-              aria-label="The language your text is in"
-              className="cursor-pointer appearance-none rounded-xl border border-transparent bg-transparent py-1.5 pl-1 pr-8 font-serif text-lg font-semibold text-zomi-ink outline-none transition hover:bg-white/70 disabled:opacity-60"
-            >
-              {languages.map((l) => (
-                <option key={l.code} value={l.code}>
-                  {l.label}
-                </option>
-              ))}
-            </select>
-            <span className="pointer-events-none absolute right-2 text-zomi-muted">▾</span>
-          </span>
+          <LanguagePicker
+            value={source}
+            onChange={changeSource}
+            options={options}
+            disabled={!ready || busy}
+            ariaLabel="The language your text is in"
+          />
         </div>
         <button
           type="button"
@@ -155,24 +159,14 @@ export function ZoTranslator() {
         </button>
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-zomi-muted">Translate into</p>
-          <span className="relative inline-flex min-w-0 items-center">
-            <select
-              value={target}
-              onChange={(e) => setTarget(e.target.value)}
-              disabled={!ready || busy}
-              aria-label="The language to translate into"
-              className="cursor-pointer appearance-none rounded-xl border border-transparent bg-transparent py-1.5 pl-1 pr-8 font-serif text-lg font-semibold text-zomi-ink outline-none transition hover:bg-white/70 disabled:opacity-60"
-            >
-              {languages
-                .filter((l) => l.code !== source)
-                .map((l) => (
-                  <option key={l.code} value={l.code}>
-                    {label(l.code)}
-                  </option>
-                ))}
-            </select>
-            <span className="pointer-events-none absolute right-2 text-zomi-muted">▾</span>
-          </span>
+          <LanguagePicker
+            value={target}
+            onChange={setTarget}
+            options={options.filter((o) => o.code !== source)}
+            disabled={!ready || busy}
+            ariaLabel="The language to translate into"
+            align="right"
+          />
         </div>
       </div>
 
