@@ -74,6 +74,12 @@ export default function App() {
   const [mode, setMode] = useState<"paite" | "zo">(() =>
     typeof location !== "undefined" && location.hash === "#zo" ? "zo" : "paite",
   );
+  // The Zo tab stays mounted once it has been opened, so its text and translation are still there after a
+  // look at the other tab (the Paite tab's are kept in this component anyway).
+  const [zoOpened, setZoOpened] = useState(false);
+  useEffect(() => {
+    if (mode === "zo") setZoOpened(true);
+  }, [mode]);
   useEffect(() => {   // a #zo link opened on a page that is already loaded switches the tab too
     const sync = () => setMode(location.hash === "#zo" ? "zo" : "paite");
     window.addEventListener("hashchange", sync);
@@ -637,7 +643,11 @@ export default function App() {
           ))}
         </nav>
 
-        {mode === "zo" && <ZoTranslator />}
+        {(zoOpened || mode === "zo") && (
+          <div className={mode === "zo" ? undefined : "hidden"}>
+            <ZoTranslator />
+          </div>
+        )}
 
         <div className={mode === "zo" ? "hidden" : undefined}>
 
