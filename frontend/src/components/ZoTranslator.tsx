@@ -6,9 +6,8 @@ import { FeedbackPanel } from "./FeedbackPanel";
 // How Zo-tab translations are marked in the translation log and the admin panel.
 export const ZO_ROUTE = "own-125m";
 
-// Our own model for English and the Zo languages. It is a test model: good from English, weak between two
-// Zo languages (too few such pairs to learn from). The visitor picks the language the text is in and one
-// language to translate into, as on the Paite tab. Zo to Zo can be tried and carries a short note.
+// Our own model for English and the Zo languages (the "small" model). The visitor picks the language the
+// text is in and one language to translate into, as on the Paite tab; the two can be swapped.
 // The server also checks the text itself, in case the source was left on English.
 export function ZoTranslator() {
   const [status, setStatus] = useState<ZoStatus | null>(null);

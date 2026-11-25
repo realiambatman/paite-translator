@@ -621,7 +621,7 @@ export default function App() {
         <nav className="mt-5 flex gap-1 border-b border-stone-300/70 text-sm" role="tablist" aria-label="Translator">
           {([
             ["paite", "Paite translator (fine-tuned)"],
-            ["zo", "Zo languages (test model)"],
+            ["zo", "Zo languages (small)"],
           ] as const).map(([key, title]) => (
             <button
               key={key}

@@ -1,4 +1,4 @@
-"""Our own translation model for English and the Zo languages (sensix-zo/zo-translate-medium).
+"""Our own translation model for English and the Zo languages (sensix-zo/zo-translate-small).
 
 A 137M encoder-decoder trained from scratch with its own vocabulary on the v9 set (November 2026). Two tags
 go in front of the text: <2pck>, <2lus>, ... chooses the language it writes, and <src_en>, <src_pck>, ...
@@ -7,7 +7,7 @@ often hands short text back unchanged. The tag is left out only when the languag
 and for a model that has no such tags (the earlier 125M). Each line is split into sentences and translated
 sentence by sentence, so a paragraph is not half translated and line breaks are kept.
 
-It runs through CTranslate2 (int8, a few times faster on CPU) from sensix-zo/zo-translate-medium-ct2,
+It runs through CTranslate2 (int8, a few times faster on CPU) from sensix-zo/zo-translate-small-ct2,
 and falls back to the PyTorch model when that copy is missing or does not load (or ZO_BACKEND=pytorch).
 """
 
@@ -18,9 +18,9 @@ import threading
 import time
 from pathlib import Path
 
-ZO_MODEL_REPO = os.environ.get("ZO_MODEL_REPO", "sensix-zo/zo-translate-medium")
+ZO_MODEL_REPO = os.environ.get("ZO_MODEL_REPO", "sensix-zo/zo-translate-small")
 ZO_MODEL_PATH_FILE = Path(os.environ.get("ZO_MODEL_PATH_FILE", "/app/.zo_model_path"))
-ZO_CT2_MODEL_REPO = os.environ.get("ZO_CT2_MODEL_REPO", "sensix-zo/zo-translate-medium-ct2")
+ZO_CT2_MODEL_REPO = os.environ.get("ZO_CT2_MODEL_REPO", "sensix-zo/zo-translate-small-ct2")
 ZO_CT2_PATH_FILE = Path(os.environ.get("ZO_CT2_PATH_FILE", "/app/.zo_ct2_path"))
 ZO_BACKEND = os.environ.get("ZO_BACKEND", "ctranslate2").lower()   # "pytorch" skips CTranslate2
 CT2_COMPUTE_TYPE = os.environ.get("ZO_CT2_COMPUTE_TYPE", "int8")

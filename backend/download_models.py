@@ -31,7 +31,7 @@ print(f"Model download complete ({backend}): {model_path}")
 
 # Our own model for English and the Zo languages (zo_model.py)
 ZO_MODEL_PATH_FILE = Path(os.environ.get("ZO_MODEL_PATH_FILE", "/app/.zo_model_path"))
-zo_repo = os.environ.get("ZO_MODEL_REPO", "sensix-zo/zo-translate-medium")
+zo_repo = os.environ.get("ZO_MODEL_REPO", "sensix-zo/zo-translate-small")
 try:
     zo_path = snapshot_download(repo_id=zo_repo, token=token)
     ZO_MODEL_PATH_FILE.write_text(zo_path, encoding="utf-8")
@@ -41,7 +41,7 @@ except Exception as exc:  # the site still builds; the model then downloads when
 
 # The same model converted to CTranslate2 int8, which zo_model.py prefers (the PyTorch copy above is the fallback)
 ZO_CT2_PATH_FILE = Path(os.environ.get("ZO_CT2_PATH_FILE", "/app/.zo_ct2_path"))
-zo_ct2_repo = os.environ.get("ZO_CT2_MODEL_REPO", "sensix-zo/zo-translate-medium-ct2")
+zo_ct2_repo = os.environ.get("ZO_CT2_MODEL_REPO", "sensix-zo/zo-translate-small-ct2")
 try:
     zo_ct2_path = snapshot_download(repo_id=zo_ct2_repo, token=token)
     ZO_CT2_PATH_FILE.write_text(zo_ct2_path, encoding="utf-8")
