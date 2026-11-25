@@ -138,10 +138,11 @@ def zo_translate(body: ZoTranslateRequest):
         raise HTTPException(status_code=503, detail=zo.error or "The Zo model is still loading. Please try again shortly.")
     if not body.text.strip():
         return {"results": [], "seconds": 0}
-    # The model is good from English and weak between two Zo languages (too few such pairs to learn from).
     # The language the visitor says the text is in is never an answer. From a Zo language any other language
     # may be tried (the page marks Zo to Zo as in progress). When the source says English but the text itself
     # clearly is not, the answer is English only, and the page says so.
+    # The model is told the language of the text (its source tag): the one the visitor chose, except when the
+    # text contradicts it (source English, text not English), where no source is given.
     english = is_english(body.text)
     only_english = body.source == "en" and not english
     if only_english:
@@ -151,7 +152,7 @@ def zo_translate(body: ZoTranslateRequest):
         if not wanted:
             raise HTTPException(status_code=400, detail="Choose a language to translate into.")
     try:
-        out = zo.translate_many(body.text, wanted[0], wanted[1:])
+        out = zo.translate_many(body.text, wanted[0], wanted[1:], None if only_english else body.source)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     out["english_only"] = only_english
