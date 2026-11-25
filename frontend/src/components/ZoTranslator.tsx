@@ -57,8 +57,23 @@ export function ZoTranslator() {
   // The language the text is in is never an answer: picking it as the source moves the answer elsewhere.
   const changeSource = (code: string) => {
     setSource(code);
-    if (code !== "en") setTarget("en");                       // from a Zo language, English is what works
-    else if (target === "en") setTarget(status?.default_target ?? "pck");
+    if (target === code) setTarget(code === "en" ? (status?.default_target ?? "pck") : "en");
+  };
+
+  // Swap the two languages; the translation that was shown becomes the text to translate back.
+  const swap = () => {
+    if (busy) return;
+    const shown = results.find((r) => r.code === target);
+    const back = shown ? (picked[target] ?? shown.translation) : "";
+    setSource(target);
+    setTarget(source);
+    if (back) setText(back);
+    setResults([]);
+    setLogIds({});
+    setPicked({});
+    setNotEnglish(false);
+    setSeconds(null);
+    setError(null);
   };
 
   const run = async () => {
@@ -127,6 +142,18 @@ export function ZoTranslator() {
             <span className="pointer-events-none absolute right-2 text-zomi-muted">▾</span>
           </span>
         </div>
+        <button
+          type="button"
+          onClick={swap}
+          disabled={!ready || busy}
+          className="grid h-9 w-9 shrink-0 place-items-center self-start rounded-full text-zomi-red transition hover:bg-white disabled:opacity-50 sm:self-end"
+          aria-label="Swap languages"
+          title="Swap languages"
+        >
+          <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M3 7h12m0 0-3-3m3 3-3 3M17 13H5m0 0 3 3m-3-3 3-3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-zomi-muted">Translate into</p>
           <span className="relative inline-flex min-w-0 items-center">
